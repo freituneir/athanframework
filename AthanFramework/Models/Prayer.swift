@@ -72,4 +72,18 @@ enum Prayer: String, CaseIterable, Codable, Identifiable {
         case .isha:    return "Night prayer"
         }
     }
+
+    /// Unique color hex representing the time of day for each prayer.
+    var colorHex: String {
+        switch self {
+        case .fajr:    return "#2C3E7B"  // deep indigo — pre-dawn
+        case .dhuhr:   return "#3A8DDE"  // bright sky blue — midday
+        case .asr:     return "#D4792C"  // warm amber/orange — afternoon
+        case .maghrib: return "#CF5C3F"  // coral/sunset
+        case .isha:    return "#5B3A8C"  // deep purple — night
+        }
+    }
+
+    /// Sunrise color hex (amber/gold).
+    static let sunriseColorHex = "#E8A317"
 }

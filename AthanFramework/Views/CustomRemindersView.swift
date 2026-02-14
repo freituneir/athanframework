@@ -69,8 +69,17 @@ struct ReminderRow: View {
 
     @State private var bellAnimating = false
 
+    private var accentColor: Color {
+        reminder.isUrgent ? .orange : Color(hex: AppConstants.Defaults.tintColorHex)
+    }
+
     var body: some View {
         HStack(spacing: 12) {
+            // Left accent bar
+            RoundedRectangle(cornerRadius: 2)
+                .fill(reminder.isEnabled ? accentColor : accentColor.opacity(0.3))
+                .frame(width: 3, height: 40)
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(reminder.title)
@@ -111,7 +120,7 @@ struct ReminderRow: View {
                 }
             } label: {
                 Image(systemName: reminder.isEnabled ? "bell.fill" : "bell.slash")
-                    .foregroundStyle(reminder.isEnabled ? Color(hex: AppConstants.Defaults.tintColorHex) : .secondary)
+                    .foregroundStyle(reminder.isEnabled ? accentColor : .secondary)
                     .symbolEffect(.bounce, value: bellAnimating)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())

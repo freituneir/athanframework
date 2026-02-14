@@ -67,7 +67,8 @@ struct OnboardingView: View {
 
             Image(systemName: "moon.stars.fill")
                 .font(.system(size: 80))
-                .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex).gradient)
+                .foregroundStyle(.white.opacity(0.95))
+                .shadow(color: .white.opacity(0.3), radius: 20)
                 .symbolEffect(.pulse, options: .repeating)
                 .accessibilityHidden(true)
 
@@ -75,11 +76,12 @@ struct OnboardingView: View {
                 Text("Athan")
                     .font(.largeTitle)
                     .fontWeight(.bold)
+                    .foregroundStyle(.white)
 
                 Text("Never miss a prayer with system-level alarms that break through Silent Mode and Focus.")
                     .font(.body)
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -92,11 +94,24 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+            .tint(.white)
+            .foregroundStyle(Color(hex: "#1A2D5A"))
             .controlSize(.large)
             .sensoryFeedback(.impact(flexibility: .soft), trigger: viewModel.currentStep)
             .accessibilityHint("Begin setup")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(hex: "#1A2D5A"),
+                    Color(hex: "#1B7A3D").opacity(0.8)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+        )
     }
 
     // MARK: - Permission Steps
@@ -205,11 +220,18 @@ struct OnboardingView: View {
         VStack(spacing: 24) {
             Spacer()
 
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 80))
-                .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex).gradient)
-                .symbolEffect(.bounce, options: .nonRepeating)
-                .accessibilityHidden(true)
+            ZStack {
+                // Soft glow behind the checkmark
+                Circle()
+                    .fill(Color(hex: AppConstants.Defaults.tintColorHex).opacity(0.15))
+                    .frame(width: 120, height: 120)
+
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 80))
+                    .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex).gradient)
+                    .symbolEffect(.bounce, options: .nonRepeating)
+                    .accessibilityHidden(true)
+            }
 
             VStack(spacing: 12) {
                 Text("You're All Set")
@@ -222,6 +244,17 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            // Prayer icons strip
+            HStack(spacing: 16) {
+                ForEach(Prayer.allCases) { prayer in
+                    Image(systemName: prayer.sfSymbol)
+                        .font(.title3)
+                        .foregroundStyle(Color(hex: prayer.colorHex))
+                }
+            }
+            .padding(.top, 8)
+            .accessibilityHidden(true)
 
             Spacer()
 

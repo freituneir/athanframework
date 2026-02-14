@@ -86,6 +86,25 @@ final class PrayerTimesViewModel {
         return sunrise.isPast
     }
 
+    /// Returns a short description of the alarm offset for a prayer, or nil if at prayer time.
+    /// e.g., "30 min before sunrise" or "5 min after"
+    func offsetDescription(for prayer: Prayer) -> String? {
+        guard let config = alarmConfigs.first(where: { $0.prayerName == prayer.rawValue }),
+              config.isEnabled,
+              config.offsetMinutes != 0 else {
+            return nil
+        }
+
+        let abs = abs(config.offsetMinutes)
+        let direction = config.offsetMinutes < 0 ? "before" : "after"
+
+        if prayer == .fajr && config.usesSunriseOffset {
+            return "\(abs) min \(direction) sunrise"
+        } else {
+            return "\(abs) min \(direction)"
+        }
+    }
+
     /// Returns the next upcoming prayer, or nil if all have passed.
     var nextPrayer: Prayer? {
         for prayer in Prayer.allCases {
