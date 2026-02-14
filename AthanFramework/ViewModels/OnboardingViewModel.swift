@@ -52,7 +52,13 @@ final class OnboardingViewModel {
 
     func requestAlarmKitPermission() async {
         isProcessing = true
-        alarmKitGranted = (try? await alarmService.requestAuthorization()) ?? false
+        do {
+            alarmKitGranted = try await alarmService.requestAuthorization()
+            print("[Onboarding] AlarmKit granted: \(alarmKitGranted)")
+        } catch {
+            print("[Onboarding] AlarmKit authorization FAILED: \(error)")
+            alarmKitGranted = false
+        }
         isProcessing = false
     }
 

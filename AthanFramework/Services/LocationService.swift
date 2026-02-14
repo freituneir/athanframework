@@ -30,7 +30,8 @@ enum LocationError: LocalizedError {
 /// Provides one-shot location via async/await, significant-change monitoring
 /// for background updates, and reverse geocoding for display names.
 @Observable
-final class LocationService: NSObject, CLLocationManagerDelegate {
+@MainActor
+final class LocationService: NSObject, @preconcurrency CLLocationManagerDelegate {
 
     // MARK: - Published State
 

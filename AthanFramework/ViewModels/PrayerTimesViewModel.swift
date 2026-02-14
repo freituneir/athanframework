@@ -72,6 +72,20 @@ final class PrayerTimesViewModel {
         return time.isPast
     }
 
+    // MARK: - Sunrise Display
+
+    /// Formatted sunrise time for display, e.g., "6:15 AM".
+    var sunriseTimeString: String {
+        guard let sunrise = todayTimes?.sunrise else { return "--:--" }
+        return DateFormatter.prayerTime.string(from: sunrise)
+    }
+
+    /// Whether sunrise has already passed today.
+    var sunriseHasPassed: Bool {
+        guard let sunrise = todayTimes?.sunrise else { return false }
+        return sunrise.isPast
+    }
+
     /// Returns the next upcoming prayer, or nil if all have passed.
     var nextPrayer: Prayer? {
         for prayer in Prayer.allCases {

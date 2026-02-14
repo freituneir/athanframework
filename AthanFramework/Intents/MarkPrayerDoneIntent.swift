@@ -5,9 +5,9 @@ import AlarmKit
 /// Cancels the alarm so it stops ringing / snoozing. Conforms to `LiveActivityIntent`
 /// because AlarmKit requires it for alarm button actions.
 public struct MarkPrayerDoneIntent: LiveActivityIntent {
-    public static var title: LocalizedStringResource = "Mark Prayer Done"
-    public static var description = IntentDescription("Dismisses the prayer alarm")
-    public static var openAppWhenRun = false
+    public static var title: LocalizedStringResource { "Mark Prayer Done" }
+    public static var description: IntentDescription { IntentDescription("Dismisses the prayer alarm") }
+    public static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "Alarm Identifier")
     public var alarmIdentifier: String
@@ -27,9 +27,15 @@ public struct MarkPrayerDoneIntent: LiveActivityIntent {
 
     public func perform() async throws -> some IntentResult {
         guard let id = UUID(uuidString: alarmIdentifier) else {
+            print("[AlarmKit] MarkPrayerDone: invalid alarm ID '\(alarmIdentifier)'")
             return .result()
         }
-        try await AlarmManager.shared.stop(id: id)
+        do {
+            try AlarmManager.shared.stop(id: id)
+            print("[AlarmKit] MarkPrayerDone: stopped alarm \(id) for \(prayerName)")
+        } catch {
+            print("[AlarmKit] MarkPrayerDone: failed to stop alarm \(id): \(error)")
+        }
         return .result()
     }
 }

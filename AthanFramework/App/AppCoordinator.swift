@@ -99,6 +99,7 @@ final class AppCoordinator {
 
             // 6. Schedule tomorrow's Fajr for overnight coverage.
             //    Only schedule if today's Fajr has already passed (avoid double-scheduling).
+            //    Respects usesSunriseOffset: if enabled, alarm is relative to tomorrow's sunrise.
             let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today) ?? today
             let cachedToday = prayerTimeService.getCachedTimes(for: today)
             let todayFajrPassed = cachedToday?.fajr.map { $0 < Date() } ?? true
@@ -106,11 +107,22 @@ final class AppCoordinator {
                let tomorrowTimes = prayerTimeService.getCachedTimes(for: tomorrow),
                let fajrConfig = try getOrCreateAlarmConfigs().first(where: { $0.prayerName == Prayer.fajr.rawValue }),
                fajrConfig.isEnabled,
-               let fajrTime = tomorrowTimes.fajr,
-               fajrTime > Date() {
-                // Cancel any existing Fajr alarm before scheduling the new one
-                try await alarmService.cancelAlarm(for: .fajr)
-                try await alarmService.scheduleAlarm(for: .fajr, at: fajrTime, config: fajrConfig)
+               let fajrTime = tomorrowTimes.fajr {
+
+                // Use sunrise as reference if the user enabled "Relative to Sunrise"
+                let referenceTime: Date
+                if fajrConfig.usesSunriseOffset, let sunrise = tomorrowTimes.sunrise {
+                    referenceTime = sunrise
+                } else {
+                    referenceTime = fajrTime
+                }
+
+                let scheduledTime = referenceTime.addingTimeInterval(TimeInterval(fajrConfig.offsetMinutes * 60))
+
+                if scheduledTime > Date() {
+                    try await alarmService.cancelAlarm(for: .fajr)
+                    try await alarmService.scheduleAlarm(for: .fajr, at: scheduledTime, config: fajrConfig)
+                }
             }
 
             try cloudContext.save()

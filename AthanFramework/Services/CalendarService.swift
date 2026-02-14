@@ -4,6 +4,7 @@ import Foundation
 /// Manages calendar integration via EventKit, creating and syncing prayer time
 /// events and custom reminders to the user's calendar.
 @Observable
+@MainActor
 final class CalendarService {
 
     // MARK: - Properties

@@ -1,5 +1,5 @@
 import Foundation
-import AlarmKit
+import UserNotifications
 
 /// Utility for discovering and mapping Athan sound files bundled with the app.
 enum SoundManager {
@@ -25,11 +25,12 @@ enum SoundManager {
         AthanSound(id: "default_reminder", fileName: "default_reminder", displayName: "Gentle Reminder", description: "Soft reminder sound"),
     ]
 
-    /// Returns the `AlertConfiguration.AlertSound` for a given file name.
+    /// Returns the `UNNotificationSound` for a given file name.
     /// Falls back to `.default` if the file name is empty or not found in the bundle.
-    static func alertSound(for fileName: String) -> AlertConfiguration.AlertSound {
+    static func alertSound(for fileName: String) -> UNNotificationSound {
         guard !fileName.isEmpty else { return .default }
-        return AlertConfiguration.AlertSound.named(fileName)
+        // Sound files should be in .caf format in the app bundle
+        return UNNotificationSound(named: UNNotificationSoundName(rawValue: "\(fileName).caf"))
     }
 
     /// Looks up the display name for a sound file name. Returns the file name itself if not found.

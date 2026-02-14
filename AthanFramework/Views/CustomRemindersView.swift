@@ -72,9 +72,18 @@ struct ReminderRow: View {
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(reminder.title)
-                    .font(.headline)
-                    .foregroundStyle(reminder.isEnabled ? .primary : .secondary)
+                HStack(spacing: 6) {
+                    Text(reminder.title)
+                        .font(.headline)
+                        .foregroundStyle(reminder.isEnabled ? .primary : .secondary)
+
+                    if reminder.isUrgent {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .accessibilityLabel("Urgent alarm")
+                    }
+                }
 
                 if let time = reminder.scheduledTime {
                     Text(DateFormatter.prayerTime.string(from: time))
@@ -86,7 +95,7 @@ struct ReminderRow: View {
                 if reminder.isRecurring && !reminder.recurrenceDays.isEmpty {
                     Text(recurrenceDescription)
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -102,7 +111,7 @@ struct ReminderRow: View {
                 }
             } label: {
                 Image(systemName: reminder.isEnabled ? "bell.fill" : "bell.slash")
-                    .foregroundStyle(reminder.isEnabled ? Color(hex: AppConstants.Defaults.tintColorHex) : .tertiary)
+                    .foregroundStyle(reminder.isEnabled ? Color(hex: AppConstants.Defaults.tintColorHex) : .secondary)
                     .symbolEffect(.bounce, value: bellAnimating)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -153,6 +162,7 @@ struct AddReminderView: View {
     @State private var isRecurring = false
     @State private var selectedDays: Set<Int> = []
     @State private var snoozeDuration = AppConstants.Defaults.snoozeDurationOther
+    @State private var isUrgent = false
 
     var body: some View {
         NavigationStack {
@@ -189,6 +199,13 @@ struct AddReminderView: View {
                 }
 
                 Section {
+                    Toggle(isOn: $isUrgent) {
+                        Label("Urgent Alarm", systemImage: "exclamationmark.triangle.fill")
+                    }
+                    .tint(.orange)
+                    .accessibilityLabel("Urgent alarm")
+                    .accessibilityHint("When enabled, fires as a full-screen alarm that breaks through Silent Mode and Focus")
+
                     Picker(selection: $snoozeDuration) {
                         Text("2 minutes").tag(120)
                         Text("5 minutes").tag(300)
@@ -200,6 +217,10 @@ struct AddReminderView: View {
                     .accessibilityLabel("Snooze interval")
                 } header: {
                     Text("Alarm")
+                } footer: {
+                    if isUrgent {
+                        Text("Fires as a full-screen alarm through Silent Mode and Focus.")
+                    }
                 }
             }
             .navigationTitle("New Reminder")
@@ -217,7 +238,8 @@ struct AddReminderView: View {
                                 scheduledTime: scheduledTime,
                                 isRecurring: isRecurring,
                                 recurrenceDays: Array(selectedDays),
-                                snoozeDuration: snoozeDuration
+                                snoozeDuration: snoozeDuration,
+                                isUrgent: isUrgent
                             )
                             dismiss()
                         }

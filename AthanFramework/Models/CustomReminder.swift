@@ -20,6 +20,9 @@ final class CustomReminder {
     var isEnabled: Bool = true
     var snoozeDurationSeconds: Int = 300
 
+    /// When true, fires as an AlarmKit alarm (full-screen, breaks through Silent/Focus).
+    var isUrgent: Bool = false
+
     /// EventKit event identifier for the corresponding calendar event.
     /// Used to update/delete the calendar event when the reminder changes.
     var calendarEventID: String?

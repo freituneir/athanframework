@@ -1,0 +1,70 @@
+name: AthanFramework
+options:
+  bundleIdPrefix: com.athanframework
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: 1
+
+targets:
+  AthanFramework:
+    type: application
+    platform: iOS
+    sources:
+      - path: AthanFramework
+        excludes:
+          - "LiveActivity/AthanWidgetBundle.swift"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.athanframework.AthanFramework
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_FILE: AthanFramework/Info.plist
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_NSAlarmKitUsageDescription: "Schedule prayer time alarms that wake you for daily prayers"
+        INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "Sync prayer times and events to your calendar"
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Determine accurate prayer times for your location"
+        CODE_SIGN_ENTITLEMENTS: AthanFramework/AthanFramework.entitlements
+    dependencies:
+      - target: AthanWidgetExtension
+        embed: true
+
+  AthanWidgetExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: AthanWidgetExtension
+      - path: AthanFramework/LiveActivity/PrayerAlarmMetadata.swift
+      - path: AthanFramework/Models/Prayer.swift
+      - path: AthanFramework/Models/CalculationTypes.swift
+      - path: AthanFramework/Utilities/Constants.swift
+      - path: AthanFramework/Utilities/Color+Hex.swift
+      - path: AthanFramework/Intents/MarkPrayerDoneIntent.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.athanframework.AthanFramework.widget
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_CFBundleDisplayName: Athan Widget
+        INFOPLIST_FILE: AthanWidgetExtension/Info.plist
+
+  AthanFrameworkTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AthanFrameworkTests
+    dependencies:
+      - target: AthanFramework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.athanframework.AthanFramework.tests
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: true

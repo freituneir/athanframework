@@ -109,6 +109,17 @@ struct PrayerDetailView: View {
             // Offset section
             Section {
                 if let config = config {
+                    // Fajr-only: toggle to offset relative to Sunrise instead of Fajr time
+                    if prayer == .fajr {
+                        Toggle(isOn: Binding(
+                            get: { config.usesSunriseOffset },
+                            set: { config.usesSunriseOffset = $0; try? context.save() }
+                        )) {
+                            Label("Relative to Sunrise", systemImage: "sunrise.fill")
+                        }
+                        .tint(.orange)
+                    }
+
                     Stepper(
                         value: Binding(
                             get: { config.offsetMinutes },
@@ -119,11 +130,11 @@ struct PrayerDetailView: View {
                     ) {
                         Label {
                             if config.offsetMinutes == 0 {
-                                Text("At prayer time")
+                                Text(config.usesSunriseOffset && prayer == .fajr ? "At sunrise" : "At prayer time")
                             } else if config.offsetMinutes < 0 {
-                                Text("\(abs(config.offsetMinutes)) min before")
+                                Text("\(abs(config.offsetMinutes)) min before\(config.usesSunriseOffset && prayer == .fajr ? " sunrise" : "")")
                             } else {
-                                Text("\(config.offsetMinutes) min after")
+                                Text("\(config.offsetMinutes) min after\(config.usesSunriseOffset && prayer == .fajr ? " sunrise" : "")")
                             }
                         } icon: {
                             Image(systemName: "clock.arrow.2.circlepath")
@@ -137,7 +148,11 @@ struct PrayerDetailView: View {
             } header: {
                 Text("Offset")
             } footer: {
-                Text("Adjust when the alarm fires relative to the actual prayer time.")
+                if let config = config, config.usesSunriseOffset, prayer == .fajr {
+                    Text("Adjust when the alarm fires relative to sunrise.")
+                } else {
+                    Text("Adjust when the alarm fires relative to the actual prayer time.")
+                }
             }
         }
         .navigationTitle(prayer.displayName)

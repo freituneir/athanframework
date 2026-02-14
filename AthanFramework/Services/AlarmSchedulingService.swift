@@ -1,21 +1,18 @@
 import Foundation
-import AlarmKit
 import SwiftData
 import SwiftUI
+import UserNotifications
+import AlarmKit
 
 /// Schedules and manages AlarmKit alarms for the five daily prayers.
-///
-/// This is the core service that bridges prayer time data with iOS 26's AlarmKit.
-/// It stores alarm IDs in a device-local `DeviceAlarmState` model so alarms can be
-/// cancelled and rescheduled across app launches.
 @Observable
 @MainActor
 final class AlarmSchedulingService {
 
     // MARK: - State
 
-    /// Current authorization status, updated after requesting permission.
-    private(set) var authorizationStatus: AlarmManager.AuthorizationStatus = .notDetermined
+    /// Whether the user has granted alarm permission.
+    private(set) var isAuthorized = false
 
     /// The local-only ModelContext for reading / writing `DeviceAlarmState`.
     private let localContext: ModelContext
@@ -36,17 +33,16 @@ final class AlarmSchedulingService {
     /// Returns `true` when authorized.
     @discardableResult
     func requestAuthorization() async throws -> Bool {
+        print("[AlarmKit] Requesting authorization...")
         let status = try await AlarmManager.shared.requestAuthorization()
-        authorizationStatus = status
-        return status == .authorized
+        print("[AlarmKit] Authorization result: \(status)")
+        isAuthorized = status == .authorized
+        return isAuthorized
     }
 
     // MARK: - Reconcile (main entry point)
 
     /// Cancels outdated alarms and schedules fresh ones for every enabled prayer.
-    ///
-    /// Call this whenever prayer times or alarm configs change (e.g. on app launch,
-    /// after fetching new times, or when the user edits a config).
     func reconcileAlarms(
         prayerTimes: DailyPrayerTimes,
         configs: [PrayerAlarmConfig]
@@ -56,21 +52,25 @@ final class AlarmSchedulingService {
                 continue
             }
 
-            // If the alarm is disabled, cancel any existing alarm for this prayer.
             guard config.isEnabled, let baseTime = prayerTimes.time(for: prayer) else {
                 try await cancelAlarm(for: prayer)
                 continue
             }
 
-            // Apply offset.
-            let scheduledTime = baseTime.addingTimeInterval(TimeInterval(config.offsetMinutes * 60))
+            // For Fajr with sunrise offset: compute time relative to sunrise instead of Fajr
+            let referenceTime: Date
+            if prayer == .fajr, config.usesSunriseOffset, let sunrise = prayerTimes.sunrise {
+                referenceTime = sunrise
+            } else {
+                referenceTime = baseTime
+            }
 
-            // Skip past times.
+            let scheduledTime = referenceTime.addingTimeInterval(TimeInterval(config.offsetMinutes * 60))
+
             guard scheduledTime > Date.now else {
                 continue
             }
 
-            // Cancel the previous alarm before scheduling a new one.
             try await cancelAlarm(for: prayer)
             try await scheduleAlarm(for: prayer, at: scheduledTime, config: config)
         }
@@ -84,12 +84,11 @@ final class AlarmSchedulingService {
         at time: Date,
         config: PrayerAlarmConfig
     ) async throws {
+        print("[AlarmKit] Scheduling alarm for \(prayer.displayName) at \(time)")
         let alarmID = UUID()
 
-        // --- Schedule ---
         let schedule = Alarm.Schedule.fixed(time)
 
-        // --- Buttons ---
         let stopButton = AlarmButton(
             text: "Done",
             textColor: .white,
@@ -102,7 +101,6 @@ final class AlarmSchedulingService {
             systemImageName: "bell.and.waves.left.and.right.fill"
         )
 
-        // --- Presentation ---
         let alertPresentation = AlarmPresentation.Alert(
             title: LocalizedStringResource(stringLiteral: "\(prayer.displayName) Prayer"),
             stopButton: stopButton,
@@ -119,45 +117,36 @@ final class AlarmSchedulingService {
             countdown: countdownPresentation
         )
 
-        // --- Attributes ---
         let tintColor = Color(hex: config.tintColorHex)
         let metadata = PrayerAlarmMetadata(prayer: prayer)
-
+        
         let attributes = AlarmAttributes(
             presentation: presentation,
             metadata: metadata,
             tintColor: tintColor
         )
 
-        // --- Countdown duration (snooze persistence) ---
         let countdownDuration = Alarm.CountdownDuration(
             preAlert: nil,
             postAlert: TimeInterval(config.snoozeDurationSeconds)
         )
 
-        // --- Sound ---
-        let sound = SoundManager.alertSound(for: config.soundFileName)
-
-        // --- Stop intent ---
         let stopIntent = MarkPrayerDoneIntent(
             alarmIdentifier: alarmID.uuidString,
             prayerName: prayer.rawValue
         )
 
-        // --- Configuration ---
         let configuration = AlarmManager.AlarmConfiguration(
             countdownDuration: countdownDuration,
             schedule: schedule,
             attributes: attributes,
-            stopIntent: stopIntent,
-            sound: sound
+            stopIntent: stopIntent
         )
 
-        // Schedule with AlarmKit.
         _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: configuration)
 
-        // Persist the alarm ID locally.
         persistAlarmID(alarmID, for: prayer)
+        print("[AlarmKit] Alarm scheduled for \(prayer.displayName) with ID \(alarmID)")
     }
 
     // MARK: - Cancel
@@ -171,7 +160,7 @@ final class AlarmSchedulingService {
         do {
             try await AlarmManager.shared.stop(id: alarmID)
         } catch {
-            // The alarm may have already fired or been dismissed — that's fine.
+            print("[AlarmKit] Stop alarm failed (may have already fired): \(error)")
         }
 
         localContext.delete(state)
@@ -180,31 +169,117 @@ final class AlarmSchedulingService {
 
     // MARK: - Alarm Updates
 
-    /// Yields alarm state updates from AlarmKit. Useful for refreshing UI or
-    /// triggering follow-up scheduling when an alarm fires or is dismissed.
-    func observeAlarmUpdates() -> AlarmManager.AlarmUpdates {
+    /// Yields alarm state updates from AlarmKit.
+    var alarmUpdates: some AsyncSequence<[Alarm], Never> {
         AlarmManager.shared.alarmUpdates
+    }
+
+    // MARK: - Custom Reminder Alarms
+
+    /// Schedules an AlarmKit alarm for an "urgent" custom reminder.
+    func scheduleCustomReminderAlarm(_ reminder: CustomReminder) async throws {
+        guard let time = reminder.scheduledTime, time > Date.now else { return }
+
+        let alarmID = UUID()
+        let schedule = Alarm.Schedule.fixed(time)
+        let stateKey = "reminder-\(reminder.id.uuidString)"
+
+        let stopButton = AlarmButton(
+            text: "Done",
+            textColor: .white,
+            systemImageName: "checkmark.circle.fill"
+        )
+
+        let snoozeButton = AlarmButton(
+            text: "Snooze",
+            textColor: .white,
+            systemImageName: "bell.and.waves.left.and.right.fill"
+        )
+
+        let alertPresentation = AlarmPresentation.Alert(
+            title: LocalizedStringResource(stringLiteral: reminder.title),
+            stopButton: stopButton,
+            secondaryButton: snoozeButton,
+            secondaryButtonBehavior: .countdown
+        )
+
+        let countdownPresentation = AlarmPresentation.Countdown(
+            title: LocalizedStringResource(stringLiteral: reminder.title)
+        )
+
+        let presentation = AlarmPresentation(
+            alert: alertPresentation,
+            countdown: countdownPresentation
+        )
+
+        let metadata = ReminderAlarmMetadata(title: reminder.title)
+
+        let attributes = AlarmAttributes(
+            presentation: presentation,
+            metadata: metadata,
+            tintColor: Color(hex: AppConstants.Defaults.tintColorHex)
+        )
+
+        let countdownDuration = Alarm.CountdownDuration(
+            preAlert: nil,
+            postAlert: TimeInterval(reminder.snoozeDurationSeconds)
+        )
+
+        let configuration = AlarmManager.AlarmConfiguration(
+            countdownDuration: countdownDuration,
+            schedule: schedule,
+            attributes: attributes
+        )
+
+        _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: configuration)
+
+        persistAlarmID(alarmID, forKey: stateKey)
+        print("[AlarmKit] Urgent reminder alarm scheduled: \(reminder.title) at \(time) with ID \(alarmID)")
+    }
+
+    /// Cancels the AlarmKit alarm for a custom reminder, if one exists.
+    func cancelCustomReminderAlarm(reminderID: UUID) async throws {
+        let stateKey = "reminder-\(reminderID.uuidString)"
+        guard let state = fetchAlarmState(forKey: stateKey), let alarmID = state.alarmID else {
+            return
+        }
+
+        do {
+            try await AlarmManager.shared.stop(id: alarmID)
+        } catch {
+            print("[AlarmKit] Stop reminder alarm failed (may have already fired): \(error)")
+        }
+
+        localContext.delete(state)
+        try localContext.save()
+        print("[AlarmKit] Cancelled urgent reminder alarm for \(reminderID)")
     }
 
     // MARK: - Private helpers
 
     private func fetchAlarmState(for prayer: Prayer) -> DeviceAlarmState? {
-        let name = prayer.rawValue
+        return fetchAlarmState(forKey: prayer.rawValue)
+    }
+
+    private func fetchAlarmState(forKey key: String) -> DeviceAlarmState? {
         let device = deviceID
         let descriptor = FetchDescriptor<DeviceAlarmState>(
-            predicate: #Predicate { $0.prayerName == name && $0.deviceID == device }
+            predicate: #Predicate { $0.prayerName == key && $0.deviceID == device }
         )
         return try? localContext.fetch(descriptor).first
     }
 
     private func persistAlarmID(_ id: UUID, for prayer: Prayer) {
-        // Upsert: update existing record or insert a new one.
-        if let existing = fetchAlarmState(for: prayer) {
+        persistAlarmID(id, forKey: prayer.rawValue)
+    }
+
+    private func persistAlarmID(_ id: UUID, forKey key: String) {
+        if let existing = fetchAlarmState(forKey: key) {
             existing.alarmID = id
             existing.lastScheduled = Date()
         } else {
             let state = DeviceAlarmState(
-                prayerName: prayer.rawValue,
+                prayerName: key,
                 alarmID: id,
                 deviceID: deviceID
             )

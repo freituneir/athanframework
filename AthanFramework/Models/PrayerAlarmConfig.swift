@@ -23,6 +23,10 @@ final class PrayerAlarmConfig {
     /// Positive = after, Negative = before (e.g., -30 for 30 min before Fajr).
     var offsetMinutes: Int = 0
 
+    /// When true (Fajr only), offsetMinutes is relative to Sunrise instead of Fajr time.
+    /// e.g., offsetMinutes = -30 means "30 minutes before sunrise".
+    var usesSunriseOffset: Bool = false
+
     var escalationEnabled: Bool = true
 
     /// Tint color as hex string (SwiftData can't store Color directly).

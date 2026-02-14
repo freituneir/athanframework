@@ -60,6 +60,14 @@ struct PrayerTimesView: View {
                             isNext: viewModel.nextPrayer == prayer,
                             onToggle: { viewModel.toggleAlarm(for: prayer) }
                         )
+
+                        // Sunrise row between Fajr and Dhuhr (informational only)
+                        if prayer == .fajr {
+                            SunriseRow(
+                                timeString: viewModel.sunriseTimeString,
+                                hasPassed: viewModel.sunriseHasPassed
+                            )
+                        }
                     }
                 }
 
@@ -130,7 +138,7 @@ struct PrayerRow: View {
                 // Prayer icon
                 Image(systemName: prayer.sfSymbol)
                     .font(.title3)
-                    .foregroundStyle(isNext ? Color(hex: AppConstants.Defaults.tintColorHex) : (hasPassed ? .tertiary : .secondary))
+                    .foregroundStyle(isNext ? Color(hex: AppConstants.Defaults.tintColorHex) : (hasPassed ? Color.secondary.opacity(0.5) : Color.secondary))
                     .frame(width: 28, alignment: .center)
                     .accessibilityHidden(true)
 
@@ -176,7 +184,7 @@ struct PrayerRow: View {
                 } label: {
                     Image(systemName: isEnabled ? "bell.fill" : "bell.slash")
                         .font(.title3)
-                        .foregroundStyle(isEnabled ? Color(hex: AppConstants.Defaults.tintColorHex) : .tertiary)
+                        .foregroundStyle(isEnabled ? Color(hex: AppConstants.Defaults.tintColorHex) : Color.secondary.opacity(0.5))
                         .symbolEffect(.bounce, value: bellAnimating)
                         .frame(width: 44, height: 44) // Minimum 44pt touch target
                         .contentShape(Rectangle())
@@ -199,5 +207,39 @@ struct PrayerRow: View {
         if hasPassed { label += ", passed" }
         label += ", alarm \(isEnabled ? "on" : "off")"
         return label
+    }
+}
+
+/// Informational row showing Sunrise time. No alarm toggle, no navigation.
+struct SunriseRow: View {
+    let timeString: String
+    let hasPassed: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sunrise.fill")
+                .font(.title3)
+                .foregroundStyle(hasPassed ? Color.secondary.opacity(0.5) : .orange)
+                .frame(width: 28, alignment: .center)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Sunrise")
+                    .font(.headline)
+                    .foregroundStyle(hasPassed ? .secondary : .primary)
+
+                Text(timeString)
+                    .font(.title2)
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+                    .foregroundStyle(hasPassed ? .secondary : .primary)
+                    .contentTransition(.numericText())
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Sunrise, \(timeString)\(hasPassed ? ", passed" : "")")
     }
 }
