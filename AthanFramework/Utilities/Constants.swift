@@ -25,4 +25,9 @@ enum AppConstants {
     enum AlarmKit {
         static let usageDescription = "AthanFramework needs alarm access to wake you for prayer times"
     }
+
+    enum AppGroup {
+        static let suiteName = "group.com.athanframework.shared"
+        static let completedKey = "completedItems"
+    }
 }
