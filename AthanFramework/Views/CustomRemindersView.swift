@@ -3,7 +3,9 @@ import SwiftUI
 /// List of custom reminders with add/edit/delete capability.
 struct CustomRemindersView: View {
     @Environment(CustomReminderViewModel.self) private var viewModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showingAddSheet = false
+    @State private var editingReminder: CustomReminder?
 
     var body: some View {
         NavigationStack {
@@ -31,6 +33,10 @@ struct CustomRemindersView: View {
                                 onToggleCompletion: { viewModel.toggleCompletion(reminder) },
                                 onToggle: { viewModel.toggleReminder(reminder) }
                             )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                editingReminder = reminder
+                            }
                         }
                         .onDelete { indexSet in
                             Task {
@@ -56,8 +62,16 @@ struct CustomRemindersView: View {
             .sheet(isPresented: $showingAddSheet) {
                 AddReminderView()
             }
+            .sheet(item: $editingReminder) { reminder in
+                EditReminderView(reminder: reminder)
+            }
             .onAppear {
                 viewModel.loadReminders()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    viewModel.loadReminders()
+                }
             }
         }
     }
@@ -151,6 +165,7 @@ struct ReminderRow: View {
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(reminderAccessibilityLabel)
+        .accessibilityHint("Tap to edit")
     }
 
     private var recurrenceDescription: String {
@@ -192,63 +207,15 @@ struct AddReminderView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("Title", text: $title)
-                        .accessibilityLabel("Reminder title")
-                    TextField("Notes (optional)", text: $notes)
-                        .accessibilityLabel("Reminder notes")
-                } header: {
-                    Text("Details")
-                }
-
-                Section {
-                    DatePicker("When", selection: $scheduledTime, displayedComponents: [.date, .hourAndMinute])
-                        .accessibilityLabel("Reminder time")
-                } header: {
-                    Text("Time")
-                }
-
-                Section {
-                    Toggle(isOn: $isRecurring) {
-                        Label("Recurring", systemImage: "repeat")
-                    }
-                    .tint(Color(hex: AppConstants.Defaults.tintColorHex))
-                    .accessibilityLabel("Recurring reminder")
-
-                    if isRecurring {
-                        DayPicker(selectedDays: $selectedDays)
-                            .padding(.vertical, 4)
-                    }
-                } header: {
-                    Text("Repeat")
-                }
-
-                Section {
-                    Toggle(isOn: $isUrgent) {
-                        Label("Urgent Alarm", systemImage: "exclamationmark.triangle.fill")
-                    }
-                    .tint(.orange)
-                    .accessibilityLabel("Urgent alarm")
-                    .accessibilityHint("When enabled, fires as a full-screen alarm that breaks through Silent Mode and Focus")
-
-                    Picker(selection: $snoozeDuration) {
-                        Text("2 minutes").tag(120)
-                        Text("5 minutes").tag(300)
-                        Text("10 minutes").tag(600)
-                        Text("15 minutes").tag(900)
-                    } label: {
-                        Label("Snooze Interval", systemImage: "arrow.clockwise")
-                    }
-                    .accessibilityLabel("Snooze interval")
-                } header: {
-                    Text("Alarm")
-                } footer: {
-                    if isUrgent {
-                        Text("Fires as a full-screen alarm through Silent Mode and Focus.")
-                    }
-                }
-            }
+            ReminderFormContent(
+                title: $title,
+                notes: $notes,
+                scheduledTime: $scheduledTime,
+                isRecurring: $isRecurring,
+                selectedDays: $selectedDays,
+                snoozeDuration: $snoozeDuration,
+                isUrgent: $isUrgent
+            )
             .navigationTitle("New Reminder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -272,7 +239,148 @@ struct AddReminderView: View {
                     }
                     .fontWeight(.semibold)
                     .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .sensoryFeedback(.success, trigger: title)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Edit Reminder Sheet
+
+/// Sheet for editing an existing custom reminder.
+struct EditReminderView: View {
+    @Environment(CustomReminderViewModel.self) private var viewModel
+    @Environment(\.dismiss) private var dismiss
+
+    let reminder: CustomReminder
+
+    @State private var title: String
+    @State private var notes: String
+    @State private var scheduledTime: Date
+    @State private var isRecurring: Bool
+    @State private var selectedDays: Set<Int>
+    @State private var snoozeDuration: Int
+    @State private var isUrgent: Bool
+
+    init(reminder: CustomReminder) {
+        self.reminder = reminder
+        _title = State(initialValue: reminder.title)
+        _notes = State(initialValue: reminder.notes)
+        _scheduledTime = State(initialValue: reminder.scheduledTime ?? Date())
+        _isRecurring = State(initialValue: reminder.isRecurring)
+        _selectedDays = State(initialValue: Set(reminder.recurrenceDays))
+        _snoozeDuration = State(initialValue: reminder.snoozeDurationSeconds)
+        _isUrgent = State(initialValue: reminder.isUrgent)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ReminderFormContent(
+                title: $title,
+                notes: $notes,
+                scheduledTime: $scheduledTime,
+                isRecurring: $isRecurring,
+                selectedDays: $selectedDays,
+                snoozeDuration: $snoozeDuration,
+                isUrgent: $isUrgent
+            )
+            .navigationTitle("Edit Reminder")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        Task {
+                            try? await viewModel.updateReminder(
+                                reminder,
+                                title: title,
+                                notes: notes,
+                                scheduledTime: scheduledTime,
+                                isRecurring: isRecurring,
+                                recurrenceDays: Array(selectedDays),
+                                snoozeDuration: snoozeDuration,
+                                isUrgent: isUrgent
+                            )
+                            dismiss()
+                        }
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Shared Form Content
+
+/// Shared form fields used by both Add and Edit reminder views.
+struct ReminderFormContent: View {
+    @Binding var title: String
+    @Binding var notes: String
+    @Binding var scheduledTime: Date
+    @Binding var isRecurring: Bool
+    @Binding var selectedDays: Set<Int>
+    @Binding var snoozeDuration: Int
+    @Binding var isUrgent: Bool
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Title", text: $title)
+                    .accessibilityLabel("Reminder title")
+                TextField("Notes (optional)", text: $notes)
+                    .accessibilityLabel("Reminder notes")
+            } header: {
+                Text("Details")
+            }
+
+            Section {
+                DatePicker("When", selection: $scheduledTime, displayedComponents: [.date, .hourAndMinute])
+                    .accessibilityLabel("Reminder time")
+            } header: {
+                Text("Time")
+            }
+
+            Section {
+                Toggle(isOn: $isRecurring) {
+                    Label("Recurring", systemImage: "repeat")
+                }
+                .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                .accessibilityLabel("Recurring reminder")
+
+                if isRecurring {
+                    DayPicker(selectedDays: $selectedDays)
+                        .padding(.vertical, 4)
+                }
+            } header: {
+                Text("Repeat")
+            }
+
+            Section {
+                Toggle(isOn: $isUrgent) {
+                    Label("Urgent Alarm", systemImage: "exclamationmark.triangle.fill")
+                }
+                .tint(.orange)
+                .accessibilityLabel("Urgent alarm")
+                .accessibilityHint("When enabled, fires as a full-screen alarm that breaks through Silent Mode and Focus")
+
+                Picker(selection: $snoozeDuration) {
+                    Text("2 minutes").tag(120)
+                    Text("5 minutes").tag(300)
+                    Text("10 minutes").tag(600)
+                    Text("15 minutes").tag(900)
+                } label: {
+                    Label("Snooze Interval", systemImage: "arrow.clockwise")
+                }
+                .accessibilityLabel("Snooze interval")
+            } header: {
+                Text("Alarm")
+            } footer: {
+                if isUrgent {
+                    Text("Fires as a full-screen alarm through Silent Mode and Focus.")
                 }
             }
         }

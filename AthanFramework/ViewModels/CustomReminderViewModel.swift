@@ -22,6 +22,38 @@ final class CustomReminderViewModel {
             sortBy: [SortDescriptor(\.scheduledTime)]
         )
         reminders = (try? cloudContext.fetch(descriptor)) ?? []
+        syncSharedReminderCompletions()
+    }
+
+    /// Reads reminder completions written by StopPrayerIntent in the widget extension.
+    private func syncSharedReminderCompletions() {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+        guard var completed = suite.dictionary(forKey: AppConstants.AppGroup.completedKey) as? [String: Double] else { return }
+
+        var processed: [String] = []
+
+        for (key, timestamp) in completed {
+            // Reminder keys are formatted as "reminder-{UUID}"
+            guard key.hasPrefix("reminder-") else { continue }
+            let uuidStr = String(key.dropFirst("reminder-".count))
+            guard let reminderID = UUID(uuidString: uuidStr) else { continue }
+
+            if let reminder = reminders.first(where: { $0.id == reminderID }),
+               !reminder.isCompleted {
+                reminder.isCompleted = true
+                reminder.completedAt = Date(timeIntervalSince1970: timestamp)
+            }
+
+            processed.append(key)
+        }
+
+        if !processed.isEmpty {
+            for key in processed {
+                completed.removeValue(forKey: key)
+            }
+            suite.set(completed, forKey: AppConstants.AppGroup.completedKey)
+            try? cloudContext.save()
+        }
     }
 
     func addReminder(
@@ -72,10 +104,52 @@ final class CustomReminderViewModel {
     }
 
     /// Toggle completion state for a custom reminder.
+    /// When marking complete, also cancels the Live Activity alarm.
     func toggleCompletion(_ reminder: CustomReminder) {
         reminder.isCompleted.toggle()
         reminder.completedAt = reminder.isCompleted ? Date() : nil
         try? cloudContext.save()
+
+        if reminder.isCompleted && reminder.isUrgent {
+            Task {
+                try? await alarmService.cancelCustomReminderAlarm(reminderID: reminder.id)
+            }
+        }
+    }
+
+    func updateReminder(
+        _ reminder: CustomReminder,
+        title: String,
+        notes: String,
+        scheduledTime: Date,
+        isRecurring: Bool,
+        recurrenceDays: [Int],
+        snoozeDuration: Int,
+        isUrgent: Bool
+    ) async throws {
+        let wasUrgent = reminder.isUrgent
+
+        reminder.title = title
+        reminder.notes = notes
+        reminder.scheduledTime = scheduledTime
+        reminder.isRecurring = isRecurring
+        reminder.recurrenceDays = recurrenceDays
+        reminder.snoozeDurationSeconds = snoozeDuration
+        reminder.isUrgent = isUrgent
+
+        // Re-sync calendar event
+        try await calendarService.syncCustomReminder(reminder)
+
+        // Handle alarm changes
+        if wasUrgent {
+            try await alarmService.cancelCustomReminderAlarm(reminderID: reminder.id)
+        }
+        if isUrgent && reminder.isEnabled {
+            try await alarmService.scheduleCustomReminderAlarm(reminder)
+        }
+
+        try cloudContext.save()
+        loadReminders()
     }
 
     func toggleReminder(_ reminder: CustomReminder) {
