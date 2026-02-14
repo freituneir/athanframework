@@ -55,6 +55,12 @@ final class PrayerTimesViewModel {
         isLoading = false
     }
 
+    /// Lightweight foreground-return check: re-fetch data if stale, re-reconcile alarms.
+    func refreshIfNeeded() async {
+        await coordinator.refreshIfNeeded()
+        loadTodayTimes()
+    }
+
     /// Toggle alarm on/off for a specific prayer.
     func toggleAlarm(for prayer: Prayer) {
         guard let config = alarmConfigs.first(where: { $0.prayerName == prayer.rawValue }) else { return }
@@ -63,6 +69,7 @@ final class PrayerTimesViewModel {
     }
 
     /// Load today's completion records, creating missing ones.
+    /// Also syncs any completions written by the Live Activity's StopPrayerIntent.
     func loadCompletions() {
         let startOfDay = Calendar.current.startOfDay(for: Date())
         let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
@@ -79,16 +86,64 @@ final class PrayerTimesViewModel {
                 existing.append(completion)
             }
         }
+
+        // Sync completions from Live Activity "Done" button via shared UserDefaults
+        syncSharedCompletions(into: &existing)
+
         try? cloudContext.save()
         completions = existing
     }
 
+    /// Reads prayer completions written by StopPrayerIntent in the widget extension
+    /// and marks corresponding PrayerCompletion records as done.
+    private func syncSharedCompletions(into completions: inout [PrayerCompletion]) {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+        guard var completed = suite.dictionary(forKey: AppConstants.AppGroup.completedKey) as? [String: Double] else { return }
+
+        var processed: [String] = []
+        let todayStart = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+        let todayEnd = todayStart + 86400
+
+        for (key, timestamp) in completed {
+            // Only process today's completions
+            guard timestamp >= todayStart && timestamp < todayEnd else {
+                // Remove stale entries from previous days
+                processed.append(key)
+                continue
+            }
+
+            // Check if this is a prayer key
+            if let prayer = Prayer(rawValue: key),
+               let record = completions.first(where: { $0.prayerName == prayer.rawValue }),
+               !record.isCompleted {
+                record.isCompleted = true
+                record.completedAt = Date(timeIntervalSince1970: timestamp)
+            }
+
+            processed.append(key)
+        }
+
+        // Remove processed entries
+        for key in processed {
+            completed.removeValue(forKey: key)
+        }
+        suite.set(completed, forKey: AppConstants.AppGroup.completedKey)
+    }
+
     /// Toggle completion state for a prayer.
+    /// When marking complete, also cancels the Live Activity / alarm so they share state.
     func toggleCompletion(for prayer: Prayer) {
         guard let completion = completions.first(where: { $0.prayerName == prayer.rawValue }) else { return }
         completion.isCompleted.toggle()
         completion.completedAt = completion.isCompleted ? Date() : nil
         try? cloudContext.save()
+
+        // Dismiss the Live Activity when marking done in the app
+        if completion.isCompleted {
+            Task {
+                try? await coordinator.cancelAlarm(for: prayer)
+            }
+        }
     }
 
     /// Whether a prayer is completed today.

@@ -78,9 +78,16 @@ final class AppCoordinator {
             )
 
             // 4. Get today's prayer times and schedule alarms
+            let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today) ?? today
+            let tomorrowTimes = prayerTimeService.getCachedTimes(for: tomorrow)
+
             if let todayTimes = prayerTimeService.getCachedTimes(for: today) {
                 let configs = try getOrCreateAlarmConfigs()
-                try await alarmService.reconcileAlarms(prayerTimes: todayTimes, configs: configs)
+                try await alarmService.reconcileAlarms(
+                    prayerTimes: todayTimes,
+                    configs: configs,
+                    tomorrowFajrTime: tomorrowTimes?.fajr
+                )
 
                 // 5. Sync to calendar if enabled and access is granted — 30 days ahead
                 let hasCalendarAccess: Bool
@@ -113,18 +120,17 @@ final class AppCoordinator {
             // 6. Schedule tomorrow's Fajr for overnight coverage.
             //    Only schedule if today's Fajr has already passed (avoid double-scheduling).
             //    Respects usesSunriseOffset: if enabled, alarm is relative to tomorrow's sunrise.
-            let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today) ?? today
             let cachedToday = prayerTimeService.getCachedTimes(for: today)
             let todayFajrPassed = cachedToday?.fajr.map { $0 < Date() } ?? true
             if todayFajrPassed,
-               let tomorrowTimes = prayerTimeService.getCachedTimes(for: tomorrow),
+               let tomorrowTimesForFajr = tomorrowTimes,
                let fajrConfig = try getOrCreateAlarmConfigs().first(where: { $0.prayerName == Prayer.fajr.rawValue }),
                fajrConfig.isEnabled,
-               let fajrTime = tomorrowTimes.fajr {
+               let fajrTime = tomorrowTimesForFajr.fajr {
 
                 // Use sunrise as reference if the user enabled "Relative to Sunrise"
                 let referenceTime: Date
-                if fajrConfig.usesSunriseOffset, let sunrise = tomorrowTimes.sunrise {
+                if fajrConfig.usesSunriseOffset, let sunrise = tomorrowTimesForFajr.sunrise {
                     referenceTime = sunrise
                 } else {
                     referenceTime = fajrTime
@@ -134,7 +140,13 @@ final class AppCoordinator {
 
                 if scheduledTime > Date() {
                     try await alarmService.cancelAlarm(for: .fajr)
-                    try await alarmService.scheduleAlarm(for: .fajr, at: scheduledTime, config: fajrConfig)
+                    try await alarmService.scheduleAlarm(
+                        for: .fajr,
+                        at: scheduledTime,
+                        config: fajrConfig,
+                        nextPrayer: .dhuhr,
+                        nextPrayerTime: tomorrowTimesForFajr.dhuhr
+                    )
                 }
             }
 
@@ -158,6 +170,30 @@ final class AppCoordinator {
         // Refresh if the last refresh was not today
         if !Calendar.current.isDateInToday(lastRefresh) {
             await refreshAll()
+        } else {
+            // Same day — re-reconcile alarms (cancel passed, schedule upcoming)
+            await reconcileAlarmsFromCache()
+        }
+    }
+
+    /// Re-reconcile alarms using cached prayer times — no network call.
+    /// Called on foreground return (same day) to ensure alarms are current.
+    private func reconcileAlarmsFromCache() async {
+        let today = Date()
+        guard let todayTimes = prayerTimeService.getCachedTimes(for: today) else { return }
+
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today) ?? today
+        let tomorrowTimes = prayerTimeService.getCachedTimes(for: tomorrow)
+
+        do {
+            let configs = try getOrCreateAlarmConfigs()
+            try await alarmService.reconcileAlarms(
+                prayerTimes: todayTimes,
+                configs: configs,
+                tomorrowFajrTime: tomorrowTimes?.fajr
+            )
+        } catch {
+            print("[AppCoordinator] reconcileAlarmsFromCache failed: \(error)")
         }
     }
 
@@ -172,6 +208,11 @@ final class AppCoordinator {
         let prefs = UserPreferences()
         cloudContext.insert(prefs)
         return prefs
+    }
+
+    /// Cancels the active alarm for a prayer — called when marking done in the app.
+    func cancelAlarm(for prayer: Prayer) async throws {
+        try await alarmService.cancelAlarm(for: prayer)
     }
 
     func getOrCreateAlarmConfigs() throws -> [PrayerAlarmConfig] {

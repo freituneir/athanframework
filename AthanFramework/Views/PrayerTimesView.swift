@@ -4,6 +4,7 @@ import SwiftData
 /// Main screen showing today's 5 prayer times with alarm status.
 struct PrayerTimesView: View {
     @Environment(PrayerTimesViewModel.self) private var viewModel
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var preferences: [UserPreferences]
 
     private var locationName: String {
@@ -136,6 +137,18 @@ struct PrayerTimesView: View {
                 viewModel.loadTodayTimes()
                 if viewModel.todayTimes == nil {
                     await viewModel.refresh()
+                }
+                // Periodic check every 10 min: ensure all future prayer alarms are scheduled.
+                // Covers midnight rollover and any alarms that may have been cleared.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(600))
+                    await viewModel.refreshIfNeeded()
+                }
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    viewModel.loadTodayTimes()
+                    Task { await viewModel.refreshIfNeeded() }
                 }
             }
         }
