@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## Reference Projects
+
+- **AlarmKit sample:** `~/Downloads/SchedulingAnAlarmWithAlarmKit` — Apple's reference implementation for scheduling alarms with AlarmKit. Use this as the source of truth for AlarmKit API patterns, Live Activity integration, and widget extension setup.
+
 ## V2 Redesign
 
 - **Design doc:** `docs/plans/2026-02-14-athan-v2-design.md` — UI, Live Activities, completion tracking, Dynamic Island, app icon

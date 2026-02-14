@@ -27,6 +27,7 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_FILE: AthanFramework/Info.plist
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
+        INFOPLIST_KEY_CFBundleDisplayName: "Athan Beta v1"
         INFOPLIST_KEY_UILaunchScreen_Generation: true
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_NSAlarmKitUsageDescription: "Schedule prayer time alarms that wake you for daily prayers"
@@ -50,6 +51,7 @@ targets:
       - path: AthanFramework/Utilities/Constants.swift
       - path: AthanFramework/Utilities/Color+Hex.swift
       - path: AthanFramework/Intents/MarkPrayerDoneIntent.swift
+      - path: AthanFramework/Intents/AlarmControlIntents.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.athanframework.AthanFramework.widget
@@ -58,6 +60,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Athan Widget
         INFOPLIST_KEY_NSSupportsLiveActivities: true
         INFOPLIST_FILE: AthanWidgetExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: AthanWidgetExtension/AthanWidgetExtension.entitlements
 
   AthanFrameworkTests:
     type: bundle.unit-test
