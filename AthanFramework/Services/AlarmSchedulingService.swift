@@ -42,12 +42,20 @@ final class AlarmSchedulingService {
 
     // MARK: - Reconcile (main entry point)
 
-    /// Cancels outdated alarms and schedules fresh ones for every enabled prayer.
+    /// How far in advance (seconds) the Live Activity countdown appears before a prayer.
+    static let preAlertWindow: TimeInterval = 30 * 60 // 30 minutes
+
+    /// Cancels outdated alarms and schedules all upcoming prayers.
+    /// Each alarm uses Schedule.fixed() + CountdownDuration so the Live Activity
+    /// only appears 30 minutes before the prayer, not immediately.
     func reconcileAlarms(
         prayerTimes: DailyPrayerTimes,
-        configs: [PrayerAlarmConfig]
+        configs: [PrayerAlarmConfig],
+        tomorrowFajrTime: Date? = nil
     ) async throws {
-        for prayer in Prayer.allCases {
+        let orderedPrayers = Prayer.allCases // [.fajr, .dhuhr, .asr, .maghrib, .isha]
+
+        for (index, prayer) in orderedPrayers.enumerated() {
             guard let config = configs.first(where: { $0.prayerName == prayer.rawValue }) else {
                 continue
             }
@@ -71,41 +79,51 @@ final class AlarmSchedulingService {
                 continue
             }
 
+            // Compute next prayer info for post-alert countdown
+            let nextPrayer: Prayer?
+            let nextPrayerTime: Date?
+            if index + 1 < orderedPrayers.count {
+                let next = orderedPrayers[index + 1]
+                nextPrayer = next
+                nextPrayerTime = prayerTimes.time(for: next)
+            } else {
+                // After Isha, next is tomorrow's Fajr
+                nextPrayer = .fajr
+                nextPrayerTime = tomorrowFajrTime
+            }
+
             try await cancelAlarm(for: prayer)
-            try await scheduleAlarm(for: prayer, at: scheduledTime, config: config)
+            try await scheduleAlarm(
+                for: prayer,
+                at: scheduledTime,
+                config: config,
+                nextPrayer: nextPrayer,
+                nextPrayerTime: nextPrayerTime
+            )
         }
     }
 
     // MARK: - Schedule
 
     /// Schedules a single AlarmKit alarm for a prayer.
+    /// Uses Schedule.fixed() so the alarm fires at the exact prayer time,
+    /// plus CountdownDuration with a 30-minute preAlert so the Live Activity
+    /// only appears 30 minutes before — not immediately on schedule().
     func scheduleAlarm(
         for prayer: Prayer,
         at time: Date,
-        config: PrayerAlarmConfig
+        config: PrayerAlarmConfig,
+        nextPrayer: Prayer? = nil,
+        nextPrayerTime: Date? = nil
     ) async throws {
         print("[AlarmKit] Scheduling alarm for \(prayer.displayName) at \(time)")
         let alarmID = UUID()
 
-        let schedule = Alarm.Schedule.fixed(time)
-
-        let stopButton = AlarmButton(
-            text: "Done",
-            textColor: .white,
-            systemImageName: "checkmark.circle.fill"
-        )
-
-        let snoozeButton = AlarmButton(
-            text: "Snooze",
-            textColor: .white,
-            systemImageName: "bell.and.waves.left.and.right.fill"
-        )
-
         let alertPresentation = AlarmPresentation.Alert(
             title: LocalizedStringResource(stringLiteral: "\(prayer.displayName) Prayer"),
-            stopButton: stopButton,
-            secondaryButton: snoozeButton,
-            secondaryButtonBehavior: .countdown
+            stopButton: .prayerStopButton,
+            secondaryButton: .prayerSnoozeButton,
+            secondaryButtonBehavior: .custom
         )
 
         let countdownPresentation = AlarmPresentation.Countdown(
@@ -118,35 +136,54 @@ final class AlarmSchedulingService {
         )
 
         let tintColor = Color(hex: config.tintColorHex)
-        let metadata = PrayerAlarmMetadata(prayer: prayer)
-        
+        let metadata = PrayerAlarmMetadata(prayer: prayer, fireDate: time, nextPrayer: nextPrayer)
+
         let attributes = AlarmAttributes(
             presentation: presentation,
             metadata: metadata,
             tintColor: tintColor
         )
 
+        // Schedule: fire at the exact prayer time
+        let schedule = Alarm.Schedule.fixed(time)
+
+        // preAlert: Live Activity countdown appears this many seconds before the alarm fires.
+        // Use 30 minutes, but cap at the actual time remaining if less than 30 min away.
+        let secondsUntil = time.timeIntervalSince(.now)
+        let preAlertSeconds = min(Self.preAlertWindow, max(secondsUntil, 30))
+
+        // postAlert: how long the Live Activity persists after firing.
+        //   Ends when the NEXT prayer's pre-alert begins (30 min before next prayer),
+        //   so only one Live Activity is visible at a time.
+        //   Fallback: 4 hours if next prayer time isn't available.
+        let postAlertSeconds: TimeInterval
+        if let nextTime = nextPrayerTime, nextTime > time {
+            let gapToNext = nextTime.timeIntervalSince(time)
+            postAlertSeconds = max(60, gapToNext - Self.preAlertWindow)
+        } else {
+            postAlertSeconds = 4 * 60 * 60
+        }
+
         let countdownDuration = Alarm.CountdownDuration(
-            preAlert: nil,
-            postAlert: TimeInterval(config.snoozeDurationSeconds)
+            preAlert: preAlertSeconds,
+            postAlert: postAlertSeconds
         )
 
-        let stopIntent = MarkPrayerDoneIntent(
-            alarmIdentifier: alarmID.uuidString,
-            prayerName: prayer.rawValue
-        )
+        let stopIntent = StopPrayerIntent(alarmID: alarmID.uuidString, entityName: prayer.rawValue)
+        let secondaryIntent = RepeatPrayerIntent(alarmID: alarmID.uuidString)
 
         let configuration = AlarmManager.AlarmConfiguration(
             countdownDuration: countdownDuration,
             schedule: schedule,
             attributes: attributes,
-            stopIntent: stopIntent
+            stopIntent: stopIntent,
+            secondaryIntent: secondaryIntent
         )
 
         _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: configuration)
 
         persistAlarmID(alarmID, for: prayer)
-        print("[AlarmKit] Alarm scheduled for \(prayer.displayName) with ID \(alarmID)")
+        print("[AlarmKit] Alarm scheduled for \(prayer.displayName) at \(time) — preAlert: \(Int(preAlertSeconds))s, postAlert: \(Int(postAlertSeconds))s, ID: \(alarmID)")
     }
 
     // MARK: - Cancel
@@ -181,26 +218,13 @@ final class AlarmSchedulingService {
         guard let time = reminder.scheduledTime, time > Date.now else { return }
 
         let alarmID = UUID()
-        let schedule = Alarm.Schedule.fixed(time)
         let stateKey = "reminder-\(reminder.id.uuidString)"
-
-        let stopButton = AlarmButton(
-            text: "Done",
-            textColor: .white,
-            systemImageName: "checkmark.circle.fill"
-        )
-
-        let snoozeButton = AlarmButton(
-            text: "Snooze",
-            textColor: .white,
-            systemImageName: "bell.and.waves.left.and.right.fill"
-        )
 
         let alertPresentation = AlarmPresentation.Alert(
             title: LocalizedStringResource(stringLiteral: reminder.title),
-            stopButton: stopButton,
-            secondaryButton: snoozeButton,
-            secondaryButtonBehavior: .countdown
+            stopButton: .prayerStopButton,
+            secondaryButton: .prayerSnoozeButton,
+            secondaryButtonBehavior: .custom
         )
 
         let countdownPresentation = AlarmPresentation.Countdown(
@@ -212,7 +236,7 @@ final class AlarmSchedulingService {
             countdown: countdownPresentation
         )
 
-        let metadata = ReminderAlarmMetadata(title: reminder.title)
+        let metadata = ReminderAlarmMetadata(title: reminder.title, fireDate: time, entityName: stateKey)
 
         let attributes = AlarmAttributes(
             presentation: presentation,
@@ -220,21 +244,34 @@ final class AlarmSchedulingService {
             tintColor: Color(hex: AppConstants.Defaults.tintColorHex)
         )
 
+        // Schedule: fire at the exact reminder time
+        let schedule = Alarm.Schedule.fixed(time)
+
+        // preAlert: Live Activity appears 30 min before (or less if closer than 30 min)
+        let secondsUntil = time.timeIntervalSince(.now)
+        let preAlertSeconds = min(Self.preAlertWindow, max(secondsUntil, 30))
+
+        // postAlert: 4 hours for reminders (count UP from fire time)
         let countdownDuration = Alarm.CountdownDuration(
-            preAlert: nil,
-            postAlert: TimeInterval(reminder.snoozeDurationSeconds)
+            preAlert: preAlertSeconds,
+            postAlert: 4 * 60 * 60
         )
+
+        let stopIntent = StopPrayerIntent(alarmID: alarmID.uuidString, entityName: stateKey)
+        let secondaryIntent = RepeatPrayerIntent(alarmID: alarmID.uuidString)
 
         let configuration = AlarmManager.AlarmConfiguration(
             countdownDuration: countdownDuration,
             schedule: schedule,
-            attributes: attributes
+            attributes: attributes,
+            stopIntent: stopIntent,
+            secondaryIntent: secondaryIntent
         )
 
         _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: configuration)
 
         persistAlarmID(alarmID, forKey: stateKey)
-        print("[AlarmKit] Urgent reminder alarm scheduled: \(reminder.title) at \(time) with ID \(alarmID)")
+        print("[AlarmKit] Urgent reminder alarm scheduled: \(reminder.title) at \(time) — preAlert: \(Int(preAlertSeconds))s, ID: \(alarmID)")
     }
 
     /// Cancels the AlarmKit alarm for a custom reminder, if one exists.
