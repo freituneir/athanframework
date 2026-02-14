@@ -65,33 +65,46 @@ final class AppCoordinator {
                 timezone: timezoneID
             )
 
-            // Also fetch next month if we're in the last 3 days (for overnight Fajr coverage)
-            let daysInMonth = Calendar.current.range(of: .day, in: .month, for: today)?.count ?? 30
-            let currentDay = Calendar.current.component(.day, from: today)
-            if currentDay > daysInMonth - 3 {
-                let nextMonth = Calendar.current.date(byAdding: .month, value: 1, to: today) ?? today
-                try await prayerTimeService.fetchMonth(
-                    year: Calendar.current.component(.year, from: nextMonth),
-                    month: Calendar.current.component(.month, from: nextMonth),
-                    latitude: location.coordinate.latitude,
-                    longitude: location.coordinate.longitude,
-                    method: preferences.calculationMethod,
-                    school: preferences.school,
-                    timezone: timezoneID
-                )
-            }
+            // Always fetch next month too so we have 30+ days of data for calendar sync
+            let nextMonth = Calendar.current.date(byAdding: .month, value: 1, to: today) ?? today
+            try await prayerTimeService.fetchMonth(
+                year: Calendar.current.component(.year, from: nextMonth),
+                month: Calendar.current.component(.month, from: nextMonth),
+                latitude: location.coordinate.latitude,
+                longitude: location.coordinate.longitude,
+                method: preferences.calculationMethod,
+                school: preferences.school,
+                timezone: timezoneID
+            )
 
             // 4. Get today's prayer times and schedule alarms
             if let todayTimes = prayerTimeService.getCachedTimes(for: today) {
                 let configs = try getOrCreateAlarmConfigs()
                 try await alarmService.reconcileAlarms(prayerTimes: todayTimes, configs: configs)
 
-                // 5. Sync to calendar if enabled and access is granted
+                // 5. Sync to calendar if enabled and access is granted — 30 days ahead
+                let hasCalendarAccess: Bool
                 if preferences.calendarSyncEnabled, calendarService.hasAccess {
-                    try await calendarService.syncPrayerEvents(for: todayTimes)
+                    hasCalendarAccess = true
                 } else if preferences.calendarSyncEnabled, !calendarService.hasAccess {
-                    // Access was revoked after onboarding; request again gracefully.
-                    if let granted = try? await calendarService.requestAccess(), granted {
+                    hasCalendarAccess = (try? await calendarService.requestAccess()) ?? false
+                } else {
+                    hasCalendarAccess = false
+                }
+
+                if hasCalendarAccess {
+                    if preferences.calendarSyncAhead {
+                        // Sync the next 30 days of prayer times to calendar
+                        var upcomingDays: [DailyPrayerTimes] = []
+                        for dayOffset in 0..<30 {
+                            if let futureDate = Calendar.current.date(byAdding: .day, value: dayOffset, to: today),
+                               let cached = prayerTimeService.getCachedTimes(for: futureDate) {
+                                upcomingDays.append(cached)
+                            }
+                        }
+                        try await calendarService.syncPrayerEvents(for: upcomingDays)
+                    } else {
+                        // Just sync today
                         try await calendarService.syncPrayerEvents(for: todayTimes)
                     }
                 }

@@ -27,7 +27,8 @@ struct AthanFrameworkApp: App {
             DailyPrayerTimes.self,
             PrayerAlarmConfig.self,
             CustomReminder.self,
-            UserPreferences.self
+            UserPreferences.self,
+            PrayerCompletion.self
         ])
         let cloudConfig = ModelConfiguration(
             "CloudStore",

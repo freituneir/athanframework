@@ -79,6 +79,18 @@ final class CalendarService {
         }
     }
 
+    /// Syncs calendar events for multiple days at once (used for 30-day lookahead).
+    func syncPrayerEvents(for days: [DailyPrayerTimes]) async throws {
+        let calendar = try getOrCreatePrayerCalendar()
+
+        for day in days {
+            for prayer in Prayer.allCases {
+                guard let prayerTime = day.time(for: prayer) else { continue }
+                try syncSinglePrayerEvent(prayer: prayer, time: prayerTime, calendar: calendar)
+            }
+        }
+    }
+
     // MARK: - Custom Reminder Sync
 
     /// Creates or updates a calendar event for a custom reminder.

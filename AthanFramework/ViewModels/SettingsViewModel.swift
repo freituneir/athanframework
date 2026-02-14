@@ -35,6 +35,11 @@ final class SettingsViewModel {
         try? cloudContext.save()
     }
 
+    func toggleCalendarSyncAhead(_ enabled: Bool) {
+        preferences?.calendarSyncAhead = enabled
+        try? cloudContext.save()
+    }
+
     func selectCalendar(id: String) {
         preferences?.selectedCalendarID = id
         try? cloudContext.save()

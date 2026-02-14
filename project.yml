@@ -32,6 +32,7 @@ targets:
         INFOPLIST_KEY_NSAlarmKitUsageDescription: "Schedule prayer time alarms that wake you for daily prayers"
         INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "Sync prayer times and events to your calendar"
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Determine accurate prayer times for your location"
+        INFOPLIST_KEY_NSSupportsLiveActivities: true
         CODE_SIGN_ENTITLEMENTS: AthanFramework/AthanFramework.entitlements
     dependencies:
       - target: AthanWidgetExtension
@@ -43,6 +44,7 @@ targets:
     sources:
       - path: AthanWidgetExtension
       - path: AthanFramework/LiveActivity/PrayerAlarmMetadata.swift
+      - path: AthanFramework/LiveActivity/ReminderAlarmMetadata.swift
       - path: AthanFramework/Models/Prayer.swift
       - path: AthanFramework/Models/CalculationTypes.swift
       - path: AthanFramework/Utilities/Constants.swift
@@ -54,6 +56,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: Athan Widget
+        INFOPLIST_KEY_NSSupportsLiveActivities: true
         INFOPLIST_FILE: AthanWidgetExtension/Info.plist
 
   AthanFrameworkTests:

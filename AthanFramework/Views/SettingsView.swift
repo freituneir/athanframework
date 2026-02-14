@@ -88,11 +88,25 @@ struct SettingsView: View {
                     .tint(Color(hex: AppConstants.Defaults.tintColorHex))
                     .accessibilityLabel("Calendar sync")
                     .accessibilityValue(viewModel.preferences?.calendarSyncEnabled == true ? "On" : "Off")
+
+                    if viewModel.preferences?.calendarSyncEnabled == true {
+                        Toggle(isOn: Binding(
+                            get: { viewModel.preferences?.calendarSyncAhead ?? false },
+                            set: { viewModel.toggleCalendarSyncAhead($0) }
+                        )) {
+                            Label("30 Days Ahead", systemImage: "calendar.badge.plus")
+                        }
+                        .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                        .accessibilityLabel("Sync 30 days ahead")
+                        .accessibilityValue(viewModel.preferences?.calendarSyncAhead == true ? "On" : "Off")
+                    }
                 } header: {
                     Text("Calendar")
                 } footer: {
                     if viewModel.preferences?.calendarSyncEnabled == true {
-                        Text("Prayer times will appear as events in your calendar.")
+                        Text(viewModel.preferences?.calendarSyncAhead == true
+                            ? "Prayer times for the next 30 days will appear as events in your calendar."
+                            : "Today's prayer times will appear as events in your calendar.")
                     }
                 }
 

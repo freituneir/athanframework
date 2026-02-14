@@ -27,5 +27,9 @@ final class CustomReminder {
     /// Used to update/delete the calendar event when the reminder changes.
     var calendarEventID: String?
 
+    /// Whether the user has marked this reminder as completed.
+    var isCompleted: Bool = false
+    var completedAt: Date?
+
     init() {}
 }

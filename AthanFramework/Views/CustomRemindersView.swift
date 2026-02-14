@@ -27,6 +27,8 @@ struct CustomRemindersView: View {
                         ForEach(viewModel.reminders, id: \.id) { reminder in
                             ReminderRow(
                                 reminder: reminder,
+                                isCompleted: reminder.isCompleted,
+                                onToggleCompletion: { viewModel.toggleCompletion(reminder) },
                                 onToggle: { viewModel.toggleReminder(reminder) }
                             )
                         }
@@ -65,20 +67,32 @@ struct CustomRemindersView: View {
 
 struct ReminderRow: View {
     let reminder: CustomReminder
+    var isCompleted: Bool = false
+    var onToggleCompletion: (() -> Void)? = nil
     let onToggle: () -> Void
 
     @State private var bellAnimating = false
 
-    private var accentColor: Color {
-        reminder.isUrgent ? .orange : Color(hex: AppConstants.Defaults.tintColorHex)
-    }
-
     var body: some View {
         HStack(spacing: 12) {
-            // Left accent bar
-            RoundedRectangle(cornerRadius: 2)
-                .fill(reminder.isEnabled ? accentColor : accentColor.opacity(0.3))
-                .frame(width: 3, height: 40)
+            // Completion circle
+            if let onToggleCompletion {
+                Button {
+                    onToggleCompletion()
+                } label: {
+                    Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(
+                            isCompleted
+                                ? Color(hex: AppConstants.Defaults.tintColorHex)
+                                : Color.secondary.opacity(0.4)
+                        )
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .sensoryFeedback(.success, trigger: isCompleted)
+                .accessibilityLabel("Mark \(reminder.title) as \(isCompleted ? "incomplete" : "complete")")
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -120,7 +134,11 @@ struct ReminderRow: View {
                 }
             } label: {
                 Image(systemName: reminder.isEnabled ? "bell.fill" : "bell.slash")
-                    .foregroundStyle(reminder.isEnabled ? accentColor : .secondary)
+                    .foregroundStyle(
+                        reminder.isEnabled
+                            ? Color(hex: AppConstants.Defaults.tintColorHex)
+                            : .secondary
+                    )
                     .symbolEffect(.bounce, value: bellAnimating)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -129,7 +147,6 @@ struct ReminderRow: View {
             .sensoryFeedback(.impact(flexibility: .soft), trigger: reminder.isEnabled)
             .accessibilityLabel("\(reminder.title) alarm")
             .accessibilityValue(reminder.isEnabled ? "On" : "Off")
-            .accessibilityHint("Double tap to \(reminder.isEnabled ? "disable" : "enable")")
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)

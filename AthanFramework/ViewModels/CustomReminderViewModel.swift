@@ -71,6 +71,13 @@ final class CustomReminderViewModel {
         loadReminders()
     }
 
+    /// Toggle completion state for a custom reminder.
+    func toggleCompletion(_ reminder: CustomReminder) {
+        reminder.isCompleted.toggle()
+        reminder.completedAt = reminder.isCompleted ? Date() : nil
+        try? cloudContext.save()
+    }
+
     func toggleReminder(_ reminder: CustomReminder) {
         reminder.isEnabled.toggle()
         try? cloudContext.save()

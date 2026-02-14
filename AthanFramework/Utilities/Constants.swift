@@ -14,7 +14,7 @@ enum AppConstants {
         static let snoozeDurationOther = 300     // 5 minutes
         static let defaultSoundName = "default_athan"
         static let defaultReminderSoundName = "default_reminder"
-        static let tintColorHex = "#1B7A3D"      // Islamic green
+        static let tintColorHex = "#2D5BA0"      // Royal blue (matches app icon)
     }
 
     enum Calendar {

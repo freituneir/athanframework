@@ -1,5 +1,11 @@
 # CLAUDE.md
 
+## V2 Redesign
+
+- **Design doc:** `docs/plans/2026-02-14-athan-v2-design.md` — UI, Live Activities, completion tracking, Dynamic Island, app icon
+- **Implementation plan:** `docs/plans/2026-02-14-athan-v2-plan.md` — 6 tasks with step-by-step code
+- **V1 revert point:** Branch `v1-stable` / Tag `v1.0` — full V1 snapshot before V2 work
+
 ## Pending Reversions
 
 ### Revert iCloud/CloudKit when paid developer account is approved

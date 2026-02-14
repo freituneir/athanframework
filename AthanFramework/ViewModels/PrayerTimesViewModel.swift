@@ -15,6 +15,7 @@ final class PrayerTimesViewModel {
     var isLoading = false
     var errorMessage: String?
     var countdownToNext: String?
+    var completions: [PrayerCompletion] = []
 
     init(coordinator: AppCoordinator, cloudContext: ModelContext) {
         self.coordinator = coordinator
@@ -33,6 +34,7 @@ final class PrayerTimesViewModel {
         )
         todayTimes = try? cloudContext.fetch(descriptor).first
         loadAlarmConfigs()
+        loadCompletions()
         startCountdownTimer()
     }
 
@@ -58,6 +60,40 @@ final class PrayerTimesViewModel {
         guard let config = alarmConfigs.first(where: { $0.prayerName == prayer.rawValue }) else { return }
         config.isEnabled.toggle()
         try? cloudContext.save()
+    }
+
+    /// Load today's completion records, creating missing ones.
+    func loadCompletions() {
+        let startOfDay = Calendar.current.startOfDay(for: Date())
+        let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
+        let descriptor = FetchDescriptor<PrayerCompletion>(
+            predicate: #Predicate { $0.date >= startOfDay && $0.date < endOfDay }
+        )
+        var existing = (try? cloudContext.fetch(descriptor)) ?? []
+
+        // Ensure we have a record for every prayer today
+        for prayer in Prayer.allCases {
+            if !existing.contains(where: { $0.prayerName == prayer.rawValue }) {
+                let completion = PrayerCompletion(date: Date(), prayer: prayer)
+                cloudContext.insert(completion)
+                existing.append(completion)
+            }
+        }
+        try? cloudContext.save()
+        completions = existing
+    }
+
+    /// Toggle completion state for a prayer.
+    func toggleCompletion(for prayer: Prayer) {
+        guard let completion = completions.first(where: { $0.prayerName == prayer.rawValue }) else { return }
+        completion.isCompleted.toggle()
+        completion.completedAt = completion.isCompleted ? Date() : nil
+        try? cloudContext.save()
+    }
+
+    /// Whether a prayer is completed today.
+    func isCompleted(_ prayer: Prayer) -> Bool {
+        completions.first(where: { $0.prayerName == prayer.rawValue })?.isCompleted ?? false
     }
 
     /// Returns the time string for display, or "--:--" if not available.

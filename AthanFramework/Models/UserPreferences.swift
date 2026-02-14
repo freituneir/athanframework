@@ -19,6 +19,7 @@ final class UserPreferences {
 
     // Calendar
     var calendarSyncEnabled: Bool = false
+    var calendarSyncAhead: Bool = false
     var selectedCalendarID: String = ""
 
     // Tracking

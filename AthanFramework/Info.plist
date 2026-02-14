@@ -4,5 +4,7 @@
 <dict>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>Schedule prayer time alarms that wake you for daily prayers</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 </dict>
 </plist>

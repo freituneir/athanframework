@@ -12,28 +12,122 @@ struct PrayerTimesView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    // Gradient header with location, hijri date, and countdown
-                    headerSection
+            List {
+                // Location + Hijri date header
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if !locationName.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "location.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex))
+                                Text(locationName)
+                                    .font(.headline)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("Location: \(locationName)")
+                        }
 
-                    // Prayer cards
-                    prayerCardsSection
-
-                    // Error display with retry
-                    if let error = viewModel.errorMessage {
-                        errorSection(error)
+                        if !viewModel.hijriDate.isEmpty {
+                            Text(viewModel.hijriDate)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("Islamic date: \(viewModel.hijriDate)")
+                        }
                     }
+                    .listRowBackground(Color.clear)
+                }
 
-                    // Loading state
-                    if viewModel.isLoading && viewModel.todayTimes == nil {
-                        loadingSection
+                // Countdown to next prayer
+                if let next = viewModel.nextPrayer,
+                   let countdown = viewModel.countdownToNext {
+                    Section {
+                        HStack(spacing: 12) {
+                            Image(systemName: next.sfSymbol)
+                                .font(.title2)
+                                .foregroundStyle(Color(hex: next.colorHex))
+                                .frame(width: 32)
+                                .accessibilityHidden(true)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Next: \(next.displayName)")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Text(countdown)
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .contentTransition(.numericText())
+                            }
+
+                            Spacer()
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Next prayer is \(next.displayName) in \(countdown)")
                     }
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 16)
+
+                // Prayer rows
+                Section {
+                    ForEach(Prayer.allCases) { prayer in
+                        PrayerRow(
+                            prayer: prayer,
+                            timeString: viewModel.timeString(for: prayer),
+                            isEnabled: viewModel.alarmConfigs.first(where: {
+                                $0.prayerName == prayer.rawValue
+                            })?.isEnabled ?? true,
+                            hasPassed: viewModel.hasPassed(prayer),
+                            isNext: viewModel.nextPrayer == prayer,
+                            offsetDescription: viewModel.offsetDescription(for: prayer),
+                            isCompleted: viewModel.isCompleted(prayer),
+                            onToggleCompletion: { viewModel.toggleCompletion(for: prayer) },
+                            onToggle: { viewModel.toggleAlarm(for: prayer) }
+                        )
+
+                        // Sunrise row between Fajr and Dhuhr
+                        if prayer == .fajr {
+                            SunriseRow(
+                                timeString: viewModel.sunriseTimeString,
+                                hasPassed: viewModel.sunriseHasPassed
+                            )
+                        }
+                    }
+                }
+
+                // Error display
+                if let error = viewModel.errorMessage {
+                    Section {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(error, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                                .font(.callout)
+
+                            Button {
+                                Task { await viewModel.refresh() }
+                            } label: {
+                                Label("Retry", systemImage: "arrow.clockwise")
+                                    .font(.callout)
+                                    .fontWeight(.medium)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Error: \(error). Double tap to retry.")
+                    }
+                }
+
+                // Loading state
+                if viewModel.isLoading && viewModel.todayTimes == nil {
+                    Section {
+                        HStack {
+                            Spacer()
+                            ProgressView("Loading prayer times...")
+                                .font(.subheadline)
+                            Spacer()
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                }
             }
-            .background(Color(.systemGroupedBackground))
             .navigationTitle("Prayer Times")
             .refreshable {
                 await viewModel.refresh()
@@ -46,140 +140,9 @@ struct PrayerTimesView: View {
             }
         }
     }
-
-    // MARK: - Header
-
-    private var headerSection: some View {
-        VStack(spacing: 12) {
-            // Location and date
-            VStack(spacing: 4) {
-                if !locationName.isEmpty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "location.fill")
-                            .font(.caption)
-                        Text(locationName)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                    }
-                    .foregroundStyle(.white.opacity(0.9))
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Location: \(locationName)")
-                }
-
-                if !viewModel.hijriDate.isEmpty {
-                    Text(viewModel.hijriDate)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.7))
-                        .accessibilityLabel("Islamic date: \(viewModel.hijriDate)")
-                }
-            }
-
-            // Countdown to next prayer
-            if let next = viewModel.nextPrayer,
-               let countdown = viewModel.countdownToNext {
-                VStack(spacing: 4) {
-                    Text(next.displayName.uppercased())
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .tracking(1.5)
-                        .foregroundStyle(.white.opacity(0.7))
-
-                    Text(countdown)
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                        .contentTransition(.numericText())
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Next prayer is \(next.displayName) in \(countdown)")
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
-        .padding(.horizontal, 16)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(hex: nextPrayerColorHex).opacity(0.85),
-                    Color(hex: nextPrayerColorHex)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: Color(hex: nextPrayerColorHex).opacity(0.3), radius: 8, y: 4)
-    }
-
-    private var nextPrayerColorHex: String {
-        viewModel.nextPrayer?.colorHex ?? AppConstants.Defaults.tintColorHex
-    }
-
-    // MARK: - Prayer Cards
-
-    private var prayerCardsSection: some View {
-        VStack(spacing: 8) {
-            ForEach(Prayer.allCases) { prayer in
-                PrayerRow(
-                    prayer: prayer,
-                    timeString: viewModel.timeString(for: prayer),
-                    isEnabled: viewModel.alarmConfigs.first(where: {
-                        $0.prayerName == prayer.rawValue
-                    })?.isEnabled ?? true,
-                    hasPassed: viewModel.hasPassed(prayer),
-                    isNext: viewModel.nextPrayer == prayer,
-                    offsetDescription: viewModel.offsetDescription(for: prayer),
-                    onToggle: { viewModel.toggleAlarm(for: prayer) }
-                )
-
-                // Sunrise row between Fajr and Dhuhr
-                if prayer == .fajr {
-                    SunriseRow(
-                        timeString: viewModel.sunriseTimeString,
-                        hasPassed: viewModel.sunriseHasPassed
-                    )
-                }
-            }
-        }
-    }
-
-    // MARK: - Error & Loading
-
-    private func errorSection(_ error: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(error, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
-                .font(.callout)
-
-            Button {
-                Task { await viewModel.refresh() }
-            } label: {
-                Label("Retry", systemImage: "arrow.clockwise")
-                    .font(.callout)
-                    .fontWeight(.medium)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Error: \(error). Double tap to retry.")
-    }
-
-    private var loadingSection: some View {
-        HStack {
-            Spacer()
-            ProgressView("Loading prayer times...")
-                .font(.subheadline)
-            Spacer()
-        }
-        .padding()
-    }
 }
 
-/// A single prayer time row styled as a card.
+/// A single prayer time row — clean, native iOS style.
 struct PrayerRow: View {
     let prayer: Prayer
     let timeString: String
@@ -187,35 +150,51 @@ struct PrayerRow: View {
     let hasPassed: Bool
     let isNext: Bool
     var offsetDescription: String? = nil
+    var isCompleted: Bool = false
+    var onToggleCompletion: (() -> Void)? = nil
     let onToggle: () -> Void
 
     @State private var bellAnimating = false
-
-    private var prayerColor: Color {
-        Color(hex: prayer.colorHex)
-    }
 
     var body: some View {
         NavigationLink {
             PrayerDetailView(prayer: prayer)
         } label: {
             HStack(spacing: 12) {
-                // Prayer icon with color
+                // Completion circle
+                if let onToggleCompletion {
+                    Button {
+                        onToggleCompletion()
+                    } label: {
+                        Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
+                            .font(.title2)
+                            .foregroundStyle(
+                                isCompleted
+                                    ? Color(hex: AppConstants.Defaults.tintColorHex)
+                                    : Color.secondary.opacity(0.4)
+                            )
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .sensoryFeedback(.success, trigger: isCompleted)
+                    .accessibilityLabel("Mark \(prayer.displayName) as \(isCompleted ? "incomplete" : "complete")")
+                }
+
+                // Prayer icon with per-prayer color
                 Image(systemName: prayer.sfSymbol)
-                    .font(isNext ? .title2 : .title3)
+                    .font(.title3)
                     .foregroundStyle(
                         hasPassed
-                            ? Color.secondary.opacity(0.4)
-                            : prayerColor
+                            ? Color.secondary.opacity(0.5)
+                            : Color(hex: prayer.colorHex)
                     )
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 28, alignment: .center)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(prayer.displayName)
-                            .font(isNext ? .headline : .subheadline)
-                            .fontWeight(isNext ? .bold : .semibold)
+                            .font(.headline)
                             .foregroundStyle(hasPassed ? .secondary : .primary)
 
                         if isNext {
@@ -224,7 +203,7 @@ struct PrayerRow: View {
                                 .fontWeight(.bold)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(prayerColor.gradient)
+                                .background(Color(hex: AppConstants.Defaults.tintColorHex).gradient)
                                 .foregroundStyle(.white)
                                 .clipShape(Capsule())
                                 .accessibilityLabel("next prayer")
@@ -232,7 +211,7 @@ struct PrayerRow: View {
                     }
 
                     Text(timeString)
-                        .font(isNext ? .title2 : .title3)
+                        .font(.title2)
                         .fontWeight(.medium)
                         .monospacedDigit()
                         .foregroundStyle(hasPassed ? .secondary : .primary)
@@ -241,7 +220,7 @@ struct PrayerRow: View {
 
                 Spacer()
 
-                // Alarm toggle + offset info
+                // Alarm toggle + offset
                 VStack(spacing: 2) {
                     Button {
                         withAnimation(.bouncy(duration: 0.3)) {
@@ -256,11 +235,11 @@ struct PrayerRow: View {
                             .font(.title3)
                             .foregroundStyle(
                                 isEnabled
-                                    ? prayerColor
-                                    : Color.secondary.opacity(0.4)
+                                    ? Color(hex: AppConstants.Defaults.tintColorHex)
+                                    : Color.secondary.opacity(0.5)
                             )
                             .symbolEffect(.bounce, value: bellAnimating)
-                            .frame(width: 44, height: 44) // Minimum 44pt touch target
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -278,33 +257,8 @@ struct PrayerRow: View {
                     }
                 }
             }
-            .padding(.vertical, isNext ? 12 : 8)
-            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(
-                            isNext
-                                ? prayerColor.opacity(0.08)
-                                : Color.clear
-                        )
-                )
-                .overlay(alignment: .leading) {
-                    if !hasPassed {
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: 12,
-                            bottomLeadingRadius: 12,
-                            bottomTrailingRadius: 0,
-                            topTrailingRadius: 0
-                        )
-                        .fill(prayerColor)
-                        .frame(width: 3)
-                    }
-                }
-        )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(prayerAccessibilityLabel)
     }
@@ -323,24 +277,26 @@ struct SunriseRow: View {
     let timeString: String
     let hasPassed: Bool
 
-    private let sunriseColor = Color(hex: Prayer.sunriseColorHex)
-
     var body: some View {
         HStack(spacing: 12) {
+            // Invisible spacer to align with prayer rows' completion circles
+            Color.clear
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
+
             Image(systemName: "sunrise.fill")
                 .font(.title3)
-                .foregroundStyle(hasPassed ? Color.secondary.opacity(0.4) : sunriseColor)
-                .frame(width: 32, alignment: .center)
+                .foregroundStyle(hasPassed ? Color.secondary.opacity(0.5) : .orange)
+                .frame(width: 28, alignment: .center)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Sunrise")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+                    .font(.headline)
                     .foregroundStyle(hasPassed ? .secondary : .primary)
 
                 Text(timeString)
-                    .font(.title3)
+                    .font(.title2)
                     .fontWeight(.medium)
                     .monospacedDigit()
                     .foregroundStyle(hasPassed ? .secondary : .primary)
@@ -349,24 +305,7 @@ struct SunriseRow: View {
 
             Spacer()
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-                .overlay(alignment: .leading) {
-                    if !hasPassed {
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: 12,
-                            bottomLeadingRadius: 12,
-                            bottomTrailingRadius: 0,
-                            topTrailingRadius: 0
-                        )
-                        .fill(sunriseColor)
-                        .frame(width: 3)
-                    }
-                }
-        )
+        .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Sunrise, \(timeString)\(hasPassed ? ", passed" : "")")
     }
