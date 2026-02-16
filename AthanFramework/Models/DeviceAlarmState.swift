@@ -18,13 +18,17 @@ final class DeviceAlarmState {
     /// When this alarm was last scheduled.
     var lastScheduled: Date?
 
+    /// When this alarm is set to fire.
+    var fireDate: Date?
+
     init() {}
 
-    convenience init(prayerName: String, alarmID: UUID, deviceID: String) {
+    convenience init(prayerName: String, alarmID: UUID, deviceID: String, fireDate: Date? = nil) {
         self.init()
         self.prayerName = prayerName
         self.alarmID = alarmID
         self.deviceID = deviceID
         self.lastScheduled = Date()
+        self.fireDate = fireDate
     }
 }

@@ -42,6 +42,9 @@ final class AppCoordinator {
         lastError = nil
 
         do {
+            // 0. Clean up stale alarm records (>24h old)
+            alarmService.cleanupStaleAlarms()
+
             // 1. Get current location
             let location = try await locationService.getCurrentLocation()
             let timezone = TimeZone.current
@@ -120,9 +123,20 @@ final class AppCoordinator {
             // 6. Schedule tomorrow's Fajr for overnight coverage.
             //    Only schedule if today's Fajr has already passed (avoid double-scheduling).
             //    Respects usesSunriseOffset: if enabled, alarm is relative to tomorrow's sunrise.
+            //    Protects active Fajr alarm — don't cancel if AlarmKit still knows about it.
             let cachedToday = prayerTimeService.getCachedTimes(for: today)
             let todayFajrPassed = cachedToday?.fajr.map { $0 < Date() } ?? true
-            if todayFajrPassed,
+
+            // Check if Fajr already has an active alarm in AlarmKit
+            let fajrAlreadyActive: Bool
+            if let existingID = alarmService.fetchAlarmState(for: .fajr)?.alarmID,
+               alarmService.activeAlarmIDs.contains(existingID) {
+                fajrAlreadyActive = true
+            } else {
+                fajrAlreadyActive = false
+            }
+
+            if todayFajrPassed, !fajrAlreadyActive,
                let tomorrowTimesForFajr = tomorrowTimes,
                let fajrConfig = try getOrCreateAlarmConfigs().first(where: { $0.prayerName == Prayer.fajr.rawValue }),
                fajrConfig.isEnabled,
@@ -139,7 +153,6 @@ final class AppCoordinator {
                 let scheduledTime = referenceTime.addingTimeInterval(TimeInterval(fajrConfig.offsetMinutes * 60))
 
                 if scheduledTime > Date() {
-                    try await alarmService.cancelAlarm(for: .fajr)
                     try await alarmService.scheduleAlarm(
                         for: .fajr,
                         at: scheduledTime,

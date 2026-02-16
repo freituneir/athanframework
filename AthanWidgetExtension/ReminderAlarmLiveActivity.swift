@@ -188,10 +188,13 @@ struct ReminderAlarmControls: View {
     var entityName: String = ""
 
     var body: some View {
-        PrayerButtonView(
-            config: .prayerStopButton,
-            intent: DismissAlarmIntent(alarmID: state.alarmID.uuidString, entityName: entityName),
-            tint: .red
-        )
+        HStack(spacing: 8) {
+            // "Mark Done" button — stops alarm + LA, writes completion
+            PrayerButtonView(
+                config: .init(text: "Done", textColor: .white, systemImageName: "checkmark.circle.fill"),
+                intent: MarkDoneIntent(alarmID: state.alarmID.uuidString, entityName: entityName),
+                tint: .green
+            )
+        }
     }
 }

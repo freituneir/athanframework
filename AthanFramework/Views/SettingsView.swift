@@ -4,6 +4,11 @@ import SwiftData
 /// Settings screen: calculation method, location, calendar, school selection.
 struct SettingsView: View {
     @Environment(SettingsViewModel.self) private var viewModel
+    @Environment(AlarmSchedulingService.self) private var alarmService
+    @State private var testAlarmIndex = 0
+    @State private var testAlarmError: String?
+    @State private var testFireTime: (label: String, date: Date)?
+    @State private var stoppedCount: Int?
 
     var body: some View {
         NavigationStack {
@@ -111,6 +116,64 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        ScheduledAlarmsView()
+                    } label: {
+                        Label("Scheduled Alarms", systemImage: "alarm.fill")
+                    }
+                } header: {
+                    Text("Alarms")
+                }
+
+                Section {
+                    Button {
+                        scheduleTestAlarm(label: "Test F") {
+                            try await alarmService.scheduleTestAlarmCorrected(index: testAlarmIndex)
+                        }
+                    } label: {
+                        Label("Test F: Corrected (3 min)", systemImage: "f.circle")
+                    }
+
+                    Button(role: .destructive) {
+                        DebugLog.shared.log("Stop All: tapped")
+                        stoppedCount = alarmService.stopAllAlarms()
+                        testFireTime = nil
+                    } label: {
+                        Label("Stop All Alarms", systemImage: "xmark.octagon.fill")
+                    }
+
+                    if let fireInfo = testFireTime {
+                        Text("\(fireInfo.label) fires at \(fireInfo.date.formatted(date: .omitted, time: .standard))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let error = testAlarmError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    if let count = stoppedCount {
+                        Text("Stopped \(count) alarm(s)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text("Auth: \(alarmService.isAuthorized ? "Authorized" : "Not authorized")")
+                        .font(.caption)
+                        .foregroundStyle(alarmService.isAuthorized ? .green : .red)
+
+                    NavigationLink {
+                        DebugLogView()
+                    } label: {
+                        Label("Debug Log (\(DebugLog.shared.entries.count))", systemImage: "doc.text.magnifyingglass")
+                    }
+                } header: {
+                    Text("Debug")
+                } footer: {
+                    Text("Test F: full config with schedule offset fix. Countdown at +1 min, alarm at +3 min.")
+                }
+
+                Section {
                     HStack {
                         Label("Version", systemImage: "info.circle")
                         Spacer()
@@ -127,6 +190,21 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .onAppear {
                 viewModel.loadPreferences()
+            }
+        }
+    }
+
+    private func scheduleTestAlarm(label: String, action: @escaping () async throws -> Date) {
+        testAlarmError = nil
+        stoppedCount = nil
+        testAlarmIndex += 1
+        Task {
+            do {
+                let fireDate = try await action()
+                testFireTime = (label, fireDate)
+            } catch {
+                DebugLog.shared.error("\(label) FAILED: \(error)")
+                testAlarmError = "\(label): \(error.localizedDescription)"
             }
         }
     }

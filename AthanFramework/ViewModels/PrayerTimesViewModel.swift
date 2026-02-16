@@ -62,14 +62,25 @@ final class PrayerTimesViewModel {
     }
 
     /// Toggle alarm on/off for a specific prayer.
+    /// Immediately cancels or schedules the AlarmKit alarm.
     func toggleAlarm(for prayer: Prayer) {
         guard let config = alarmConfigs.first(where: { $0.prayerName == prayer.rawValue }) else { return }
         config.isEnabled.toggle()
         try? cloudContext.save()
+
+        Task {
+            if config.isEnabled {
+                // Re-reconcile to schedule the newly enabled alarm
+                await coordinator.refreshIfNeeded()
+            } else {
+                // Immediately cancel the alarm in AlarmKit
+                try? await coordinator.cancelAlarm(for: prayer)
+            }
+        }
     }
 
     /// Load today's completion records, creating missing ones.
-    /// Also syncs any completions written by the Live Activity's StopPrayerIntent.
+    /// Also syncs any completions written by the Live Activity's MarkDoneIntent.
     func loadCompletions() {
         let startOfDay = Calendar.current.startOfDay(for: Date())
         let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
@@ -94,7 +105,7 @@ final class PrayerTimesViewModel {
         completions = existing
     }
 
-    /// Reads prayer completions written by StopPrayerIntent in the widget extension
+    /// Reads prayer completions written by MarkDoneIntent in the widget extension
     /// and marks corresponding PrayerCompletion records as done.
     private func syncSharedCompletions(into completions: inout [PrayerCompletion]) {
         guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }

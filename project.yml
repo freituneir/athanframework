@@ -9,8 +9,24 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "1.0.0"
+    MARKETING_VERSION: "1.0.1"
     CURRENT_PROJECT_VERSION: 1
+
+schemes:
+  AthanFramework:
+    build:
+      targets:
+        AthanFramework: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - AthanFrameworkTests
+    profile:
+      config: Release
+    archive:
+      config: Release
 
 targets:
   AthanFramework:
@@ -50,7 +66,6 @@ targets:
       - path: AthanFramework/Models/CalculationTypes.swift
       - path: AthanFramework/Utilities/Constants.swift
       - path: AthanFramework/Utilities/Color+Hex.swift
-      - path: AthanFramework/Intents/MarkPrayerDoneIntent.swift
       - path: AthanFramework/Intents/AlarmControlIntents.swift
     settings:
       base:

@@ -135,11 +135,8 @@ struct PrayerTimesView: View {
             }
             .task {
                 viewModel.loadTodayTimes()
-                if viewModel.todayTimes == nil {
-                    await viewModel.refresh()
-                }
-                // Periodic check every 10 min: ensure all future prayer alarms are scheduled.
-                // Covers midnight rollover and any alarms that may have been cleared.
+                // Periodic check every 10 min: covers midnight rollover and stale alarms.
+                // Initial scheduling handled at app level (AthanFrameworkApp.task).
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(600))
                     await viewModel.refreshIfNeeded()

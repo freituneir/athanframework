@@ -10,16 +10,20 @@ struct PrayerAlarmMetadata: AlarmMetadata {
     var fireDate: Date
     /// The raw value of the next `Prayer` after this one (for post-alert countdown title).
     var nextPrayerName: String
+    /// Snooze interval in seconds — read by SnoozePrayerIntent to schedule the re-fire.
+    var snoozeDurationSeconds: Int
 
     init() {
         self.prayerName = ""
         self.fireDate = .now
         self.nextPrayerName = ""
+        self.snoozeDurationSeconds = 300
     }
 
-    init(prayer: Prayer, fireDate: Date, nextPrayer: Prayer? = nil) {
+    init(prayer: Prayer, fireDate: Date, nextPrayer: Prayer? = nil, snoozeDurationSeconds: Int = 300) {
         self.prayerName = prayer.rawValue
         self.fireDate = fireDate
         self.nextPrayerName = nextPrayer?.rawValue ?? ""
+        self.snoozeDurationSeconds = snoozeDurationSeconds
     }
 }

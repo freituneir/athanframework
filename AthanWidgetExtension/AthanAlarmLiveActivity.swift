@@ -17,7 +17,7 @@ struct AthanAlarmLiveActivity: Widget {
                     prayerTitle(attributes: context.attributes, state: context.state)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    prayerIcon(metadata: context.attributes.metadata)
+                    prayerIcon(metadata: context.attributes.metadata, state: context.state)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     bottomView(attributes: context.attributes, state: context.state)
@@ -25,7 +25,7 @@ struct AthanAlarmLiveActivity: Widget {
             } compactLeading: {
                 timerDisplay(state: context.state, metadata: context.attributes.metadata, maxWidth: 44)
                     .foregroundStyle(isPostAlert(state: context.state, metadata: context.attributes.metadata)
-                        ? Color(hex: nextPrayerColorHex(metadata: context.attributes.metadata))
+                        ? .red
                         : Color(hex: AppConstants.Defaults.tintColorHex))
             } compactTrailing: {
                 PrayerAlarmProgressView(
@@ -52,21 +52,12 @@ struct AthanAlarmLiveActivity: Widget {
         return Date.now >= fireDate
     }
 
-    /// Returns the color hex of the next prayer for post-alert display.
-    private func nextPrayerColorHex(metadata: PrayerAlarmMetadata?) -> String {
-        guard let name = metadata?.nextPrayerName,
-              let prayer = Prayer(rawValue: name) else {
-            return AppConstants.Defaults.tintColorHex
-        }
-        return prayer.colorHex
-    }
-
     func lockScreenView(attributes: AlarmAttributes<PrayerAlarmMetadata>, state: AlarmPresentationState) -> some View {
         VStack {
             HStack(alignment: .top) {
                 prayerTitle(attributes: attributes, state: state)
                 Spacer()
-                prayerIcon(metadata: attributes.metadata)
+                prayerIcon(metadata: attributes.metadata, state: state)
             }
 
             bottomView(attributes: attributes, state: state)
@@ -79,7 +70,7 @@ struct AthanAlarmLiveActivity: Widget {
             timerDisplay(state: state, metadata: attributes.metadata, maxWidth: 150)
                 .font(.system(size: 40, design: .rounded))
             Spacer()
-            PrayerAlarmControls(presentation: attributes.presentation, state: state, entityName: attributes.metadata?.prayerName ?? "")
+            PrayerAlarmControls(state: state, entityName: attributes.metadata?.prayerName ?? "")
         }
     }
 
@@ -87,16 +78,20 @@ struct AthanAlarmLiveActivity: Widget {
         Group {
             switch state.mode {
             case .countdown(let countdown):
-                // Both pre-alert and post-alert use a countdown.
-                // Pre-alert: counting down to this prayer's alarm.
-                // Post-alert: counting down to the NEXT prayer (postAlert = next prayer interval).
-                Text(timerInterval: Date.now...countdown.fireDate, countsDown: true)
+                if let fireDate = metadata?.fireDate, Date.now >= fireDate {
+                    // POST-ALERT: count UP from prayer time
+                    Text(fireDate, style: .timer)
+                        .foregroundStyle(.red)
+                } else {
+                    // PRE-ALERT: count DOWN to prayer time
+                    Text(timerInterval: Date.now...countdown.fireDate, countsDown: true)
+                }
             case .paused(let pausedState):
                 let remaining = Duration.seconds(pausedState.totalCountdownDuration - pausedState.previouslyElapsedDuration)
                 let pattern: Duration.TimeFormatStyle.Pattern = remaining > .seconds(60 * 60) ? .hourMinuteSecond : .minuteSecond
                 Text(remaining.formatted(.time(pattern: pattern)))
             case .alert:
-                // Brief alert state — show prayer name
+                // Alert state — show "Pray Now"
                 if let prayerName = metadata?.prayerName,
                    let prayer = Prayer(rawValue: prayerName) {
                     Text("Time for \(prayer.displayName)")
@@ -117,25 +112,18 @@ struct AthanAlarmLiveActivity: Widget {
 
     @ViewBuilder func prayerTitle(attributes: AlarmAttributes<PrayerAlarmMetadata>, state: AlarmPresentationState) -> some View {
         if isPostAlert(state: state, metadata: attributes.metadata) {
-            // Post-alert: show "Next: [prayer name]" if available
-            if let nextName = attributes.metadata?.nextPrayerName,
-               let nextPrayer = Prayer(rawValue: nextName) {
+            // Post-alert: show CURRENT prayer name ("Dhuhr — Pray Now")
+            if let prayerName = attributes.metadata?.prayerName,
+               let prayer = Prayer(rawValue: prayerName) {
                 HStack(spacing: 4) {
-                    Image(systemName: nextPrayer.sfSymbol)
-                        .foregroundStyle(Color(hex: nextPrayer.colorHex))
-                    Text("Next: \(nextPrayer.displayName)")
+                    Image(systemName: prayer.sfSymbol)
+                        .foregroundStyle(Color(hex: prayer.colorHex))
+                    Text("\(prayer.displayName) — Pray Now")
                 }
                 .font(.title3)
                 .fontWeight(.semibold)
                 .lineLimit(1)
                 .padding(.leading, 6)
-            } else if let prayerName = attributes.metadata?.prayerName,
-                      let prayer = Prayer(rawValue: prayerName) {
-                Text("Time for \(prayer.displayName)")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                    .padding(.leading, 6)
             } else {
                 Text("Time to pray")
                     .font(.title3)
@@ -161,7 +149,8 @@ struct AthanAlarmLiveActivity: Widget {
         }
     }
 
-    @ViewBuilder func prayerIcon(metadata: PrayerAlarmMetadata?) -> some View {
+    @ViewBuilder func prayerIcon(metadata: PrayerAlarmMetadata?, state: AlarmPresentationState) -> some View {
+        // Post-alert: show current prayer icon (not next)
         if let prayerName = metadata?.prayerName,
            let prayer = Prayer(rawValue: prayerName) {
             HStack(spacing: 4) {
@@ -190,11 +179,11 @@ struct PrayerAlarmProgressView: View {
     var body: some View {
         Group {
             if isPostAlert {
-                // Post-alert: show next prayer icon
-                if let nextName = metadata?.nextPrayerName,
-                   let nextPrayer = Prayer(rawValue: nextName) {
-                    Image(systemName: nextPrayer.sfSymbol)
-                        .foregroundStyle(Color(hex: nextPrayer.colorHex))
+                // Post-alert: show current prayer icon
+                if let prayerName = metadata?.prayerName,
+                   let prayer = Prayer(rawValue: prayerName) {
+                    Image(systemName: prayer.sfSymbol)
+                        .foregroundStyle(Color(hex: prayer.colorHex))
                 } else {
                     Image(systemName: "bell.and.waves.left.and.right.fill")
                         .foregroundStyle(.red)
@@ -244,16 +233,18 @@ struct PrayerAlarmProgressView: View {
 // MARK: - Interactive Controls
 
 struct PrayerAlarmControls: View {
-    var presentation: AlarmPresentation
     var state: AlarmPresentationState
     var entityName: String = ""
 
     var body: some View {
-        PrayerButtonView(
-            config: .prayerStopButton,
-            intent: DismissAlarmIntent(alarmID: state.alarmID.uuidString, entityName: entityName),
-            tint: .red
-        )
+        HStack(spacing: 8) {
+            // "Mark Done" button — stops alarm + LA, writes completion
+            PrayerButtonView(
+                config: .init(text: "Done", textColor: .white, systemImageName: "checkmark.circle.fill"),
+                intent: MarkDoneIntent(alarmID: state.alarmID.uuidString, entityName: entityName),
+                tint: .green
+            )
+        }
     }
 }
 

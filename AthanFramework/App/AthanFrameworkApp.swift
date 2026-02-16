@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AlarmKit // DEBUG: needed for AlarmManager.shared.authorizationState
 
 @main
 struct AthanFrameworkApp: App {
@@ -106,6 +107,18 @@ struct AthanFrameworkApp: App {
                 .environment(customReminderViewModel)
                 .environment(locationService)
                 .environment(calendarService)
+                .environment(alarmService)
+                .task {
+                    // DEBUG: log auth flow on launch
+                    DebugLog.shared.log("App launch: authState=\(AlarmManager.shared.authorizationState)")
+                    let authorized = await alarmService.requestAuthorization()
+                    DebugLog.shared.log("App launch: auth result=\(authorized)")
+                    if authorized {
+                        await coordinator.refreshIfNeeded()
+                    } else {
+                        DebugLog.shared.error("App launch: not authorized — skipping alarm scheduling")
+                    }
+                }
         }
         .modelContainer(cloudContainer)
     }

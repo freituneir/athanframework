@@ -25,7 +25,7 @@ final class CustomReminderViewModel {
         syncSharedReminderCompletions()
     }
 
-    /// Reads reminder completions written by StopPrayerIntent in the widget extension.
+    /// Reads reminder completions written by MarkDoneIntent in the widget extension.
     private func syncSharedReminderCompletions() {
         guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
         guard var completed = suite.dictionary(forKey: AppConstants.AppGroup.completedKey) as? [String: Double] else { return }
