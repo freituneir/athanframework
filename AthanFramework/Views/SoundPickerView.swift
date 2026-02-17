@@ -25,7 +25,7 @@ struct SoundPickerView: View {
                         // Sound icon with play state
                         Image(systemName: playingSound == sound.fileName ? "speaker.wave.3.fill" : "speaker.wave.2.fill")
                             .font(.body)
-                            .foregroundStyle(selectedSound == sound.fileName ? Color(hex: AppConstants.Defaults.tintColorHex) : .secondary)
+                            .foregroundStyle(selectedSound == sound.fileName ? AthanTheme.accent : .secondary)
                             .symbolEffect(.variableColor, isActive: playingSound == sound.fileName)
                             .frame(width: 24)
                             .accessibilityHidden(true)
@@ -47,7 +47,7 @@ struct SoundPickerView: View {
                             Image(systemName: "checkmark")
                                 .font(.body)
                                 .fontWeight(.semibold)
-                                .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex))
+                                .foregroundStyle(AthanTheme.accent)
                                 .transition(.scale.combined(with: .opacity))
                         }
                     }
@@ -55,7 +55,7 @@ struct SoundPickerView: View {
                 }
                 .listRowBackground(
                     selectedSound == sound.fileName
-                        ? Color(hex: AppConstants.Defaults.tintColorHex).opacity(0.08)
+                        ? AthanTheme.accent.opacity(0.08)
                         : nil
                 )
                 .accessibilityElement(children: .combine)

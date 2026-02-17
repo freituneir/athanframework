@@ -12,6 +12,7 @@ final class PrayerTimesViewModel {
 
     var todayTimes: DailyPrayerTimes?
     var tomorrowTimes: DailyPrayerTimes?
+    var yesterdayTimes: DailyPrayerTimes?
     var alarmConfigs: [PrayerAlarmConfig] = []
     var isLoading = false
     var errorMessage: String?
@@ -44,6 +45,13 @@ final class PrayerTimesViewModel {
             predicate: #Predicate { $0.date >= startOfTomorrow && $0.date < endOfTomorrow }
         )
         tomorrowTimes = try? cloudContext.fetch(tomorrowDescriptor).first
+
+        // Load yesterday's times for progress bar (need yesterday's Isha when before today's Fajr)
+        let startOfYesterday = calendar.date(byAdding: .day, value: -1, to: startOfDay) ?? startOfDay
+        let yesterdayDescriptor = FetchDescriptor<DailyPrayerTimes>(
+            predicate: #Predicate { $0.date >= startOfYesterday && $0.date < startOfDay }
+        )
+        yesterdayTimes = try? cloudContext.fetch(yesterdayDescriptor).first
 
         loadAlarmConfigs()
         loadCompletions()
@@ -160,6 +168,9 @@ final class PrayerTimesViewModel {
         completion.isCompleted.toggle()
         completion.completedAt = completion.isCompleted ? Date() : nil
         try? cloudContext.save()
+
+        // Update badge count
+        BadgeService.updateBadge(cloudContext: cloudContext, todayTimes: todayTimes)
 
         // Dismiss the Live Activity when marking done in the app
         if completion.isCompleted {
@@ -295,12 +306,18 @@ final class PrayerTimesViewModel {
             countdownFormatted = String(format: "%d:%02d", minutes, seconds)
         }
 
-        // Progress: fraction of time elapsed between previous prayer and next
+        // Progress: fraction of time elapsed between most recent prayer and next prayer.
+        // e.g. if Asr was at 3:30 PM, Maghrib at 5:30 PM, and it's 4:30 PM → progress = 50%.
         let prevTime: Date
         if let prev = Prayer.allCases.last(where: { hasPassed($0) }),
            let pt = todayTimes?.time(for: prev) {
+            // Most recent prayer that already came in today
             prevTime = pt
+        } else if let yesterdayIsha = yesterdayTimes?.isha {
+            // Before Fajr: use yesterday's Isha as the anchor
+            prevTime = yesterdayIsha
         } else {
+            // No data — use midnight as fallback
             prevTime = Calendar.current.startOfDay(for: Date())
         }
         let totalInterval = time.timeIntervalSince(prevTime)

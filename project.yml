@@ -50,6 +50,8 @@ targets:
         INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "Sync prayer times and events to your calendar"
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Determine accurate prayer times for your location"
         INFOPLIST_KEY_NSSupportsLiveActivities: true
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIconBlue AppIconRed"
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: true
         CODE_SIGN_ENTITLEMENTS: AthanFramework/AthanFramework.entitlements
     dependencies:
       - target: AthanWidgetExtension

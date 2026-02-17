@@ -20,7 +20,7 @@ struct OnboardingView: View {
                 // Progress bar (hidden on welcome screen)
                 if viewModel.currentStep != .welcome && viewModel.currentStep != .complete {
                     ProgressView(value: progress)
-                        .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                        .tint(AthanTheme.accent)
                         .padding(.horizontal)
                         .padding(.top, 8)
                         .accessibilityLabel("Onboarding progress")
@@ -159,7 +159,7 @@ struct OnboardingView: View {
         VStack(spacing: 24) {
             Image(systemName: "function")
                 .font(.system(size: 48))
-                .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex).gradient)
+                .foregroundStyle(AthanTheme.accent.gradient)
                 .accessibilityHidden(true)
 
             VStack(spacing: 8) {
@@ -208,7 +208,7 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+            .tint(AthanTheme.accent)
             .controlSize(.large)
             .sensoryFeedback(.impact(flexibility: .soft), trigger: viewModel.currentStep)
         }
@@ -223,12 +223,12 @@ struct OnboardingView: View {
             ZStack {
                 // Soft glow behind the checkmark
                 Circle()
-                    .fill(Color(hex: AppConstants.Defaults.tintColorHex).opacity(0.15))
+                    .fill(AthanTheme.accent.opacity(0.15))
                     .frame(width: 120, height: 120)
 
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 80))
-                    .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex).gradient)
+                    .foregroundStyle(AthanTheme.accent.gradient)
                     .symbolEffect(.bounce, options: .nonRepeating)
                     .accessibilityHidden(true)
             }
@@ -265,7 +265,7 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+            .tint(AthanTheme.accent)
             .controlSize(.large)
             .sensoryFeedback(.success, trigger: viewModel.currentStep)
             .accessibilityHint("Complete setup and open the app")
@@ -292,7 +292,7 @@ struct PermissionStepView: View {
         VStack(spacing: 24) {
             Image(systemName: icon)
                 .font(.system(size: 48))
-                .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex).gradient)
+                .foregroundStyle(AthanTheme.accent.gradient)
                 .symbolEffect(.bounce, value: isGranted)
                 .accessibilityHidden(true)
 
@@ -312,7 +312,7 @@ struct PermissionStepView: View {
 
             if isGranted {
                 Label("Granted", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex))
+                    .foregroundStyle(AthanTheme.accent)
                     .font(.headline)
                     .transition(.scale.combined(with: .opacity))
                     .accessibilityLabel("\(title) permission granted")
@@ -324,7 +324,7 @@ struct PermissionStepView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                .tint(AthanTheme.accent)
                 .controlSize(.large)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
@@ -342,7 +342,7 @@ struct PermissionStepView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                .tint(AthanTheme.accent)
                 .controlSize(.large)
                 .disabled(isProcessing)
                 .accessibilityHint("Opens system permission dialog for \(title.lowercased())")

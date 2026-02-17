@@ -50,7 +50,7 @@ struct SettingsView: View {
                     )) {
                         Label("Auto-detect", systemImage: "location.fill")
                     }
-                    .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                    .tint(AthanTheme.accent)
                     .accessibilityLabel("Auto-detect location")
                     .accessibilityValue(viewModel.preferences?.useAutoLocation == true ? "On" : "Off")
 
@@ -90,7 +90,7 @@ struct SettingsView: View {
                     )) {
                         Label("Sync to Calendar", systemImage: "calendar.badge.clock")
                     }
-                    .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                    .tint(AthanTheme.accent)
                     .accessibilityLabel("Calendar sync")
                     .accessibilityValue(viewModel.preferences?.calendarSyncEnabled == true ? "On" : "Off")
 
@@ -101,7 +101,7 @@ struct SettingsView: View {
                         )) {
                             Label("30 Days Ahead", systemImage: "calendar.badge.plus")
                         }
-                        .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                        .tint(AthanTheme.accent)
                         .accessibilityLabel("Sync 30 days ahead")
                         .accessibilityValue(viewModel.preferences?.calendarSyncAhead == true ? "On" : "Off")
                     }
@@ -113,6 +113,47 @@ struct SettingsView: View {
                             ? "Prayer times for the next 30 days will appear as events in your calendar."
                             : "Today's prayer times will appear as events in your calendar.")
                     }
+                }
+
+                Section {
+                    Picker(selection: Binding(
+                        get: { viewModel.preferences?.selectedTheme ?? .green },
+                        set: { viewModel.updateTheme($0) }
+                    )) {
+                        ForEach(ColorTheme.allCases) { theme in
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(theme.swatchColor)
+                                    .frame(width: 14, height: 14)
+                                Text(theme.displayName)
+                            }
+                            .tag(theme)
+                        }
+                    } label: {
+                        Label("Color Theme", systemImage: "paintpalette.fill")
+                    }
+                } header: {
+                    Text("Appearance")
+                }
+
+                Section {
+                    NavigationLink {
+                        AthanSoundPickerView(
+                            selected: viewModel.preferences?.selectedAthanSound ?? .defaultTone,
+                            onSelect: { viewModel.updateAthanSound($0) }
+                        )
+                    } label: {
+                        HStack {
+                            Label("Athan Reciter", systemImage: "music.note")
+                            Spacer()
+                            Text(viewModel.preferences?.selectedAthanSound.displayName ?? "Default")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("Athan Sound")
+                } footer: {
+                    Text("Choose the athan recitation played when a prayer alarm fires.")
                 }
 
                 Section {
@@ -128,7 +169,8 @@ struct SettingsView: View {
                 Section {
                     Button {
                         scheduleTestAlarm(label: "Test F") {
-                            try await alarmService.scheduleTestAlarmCorrected(index: testAlarmIndex)
+                            let sound = viewModel.preferences?.selectedAthanSound ?? .defaultTone
+                            return try await alarmService.scheduleTestAlarmCorrected(index: testAlarmIndex, athanSound: sound)
                         }
                     } label: {
                         Label("Test F: Corrected (3 min)", systemImage: "f.circle")
@@ -170,7 +212,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Debug")
                 } footer: {
-                    Text("Test F: full config with schedule offset fix. Countdown at +1 min, alarm at +3 min.")
+                    Text("Test F: countdown at +1 min, alarm at +3 min. Snooze = 60s (same LA, no new widget).")
                 }
 
                 Section {

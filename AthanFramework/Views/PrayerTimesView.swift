@@ -93,7 +93,7 @@ struct PrayerTimesView: View {
                 Text(now.formatted(.dateTime.month(.wide).day()))
             }
             .font(.system(size: 48, weight: .light, design: .serif))
-            .foregroundStyle(Color.white.opacity(0.92))
+            .foregroundStyle(AthanTheme.textPrimary)
 
             if !viewModel.hijriDate.isEmpty {
                 Text(viewModel.hijriDate.uppercased())
@@ -112,7 +112,7 @@ struct PrayerTimesView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("TODAY\u{2019}S PRAYERS")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.25))
+                .foregroundStyle(AthanTheme.textSecondary)
                 .tracking(2)
                 .padding(.bottom, 16)
 
@@ -135,7 +135,7 @@ struct PrayerTimesView: View {
             } label: {
                 Image(systemName: completed ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 18))
-                    .foregroundStyle(completed ? AthanTheme.accent.opacity(0.6) : Color.white.opacity(0.15))
+                    .foregroundStyle(completed ? AthanTheme.accent.opacity(0.6) : AthanTheme.textSecondary.opacity(0.35))
             }
             .buttonStyle(.plain)
             .sensoryFeedback(.success, trigger: completed)
@@ -146,16 +146,16 @@ struct PrayerTimesView: View {
                 HStack {
                     Text(prayer.displayName)
                         .font(.system(size: 17, weight: .regular))
-                        .foregroundStyle(dimmed ? Color.white.opacity(0.15) : Color.white.opacity(0.5))
-                        .strikethrough(completed, color: Color.white.opacity(0.08))
+                        .foregroundStyle(dimmed ? AthanTheme.textSecondary.opacity(0.35) : AthanTheme.textSecondary)
+                        .strikethrough(completed, color: AthanTheme.textSecondary.opacity(0.2))
 
                     Spacer()
 
                     Text(viewModel.timeString(for: prayer))
                         .font(.system(size: 16, weight: .light))
-                        .foregroundStyle(dimmed ? Color.white.opacity(0.15) : Color.white.opacity(0.3))
+                        .foregroundStyle(dimmed ? AthanTheme.textSecondary.opacity(0.35) : AthanTheme.textSecondary.opacity(0.75))
                         .monospacedDigit()
-                        .strikethrough(completed, color: Color.white.opacity(0.08))
+                        .strikethrough(completed, color: AthanTheme.textSecondary.opacity(0.2))
                 }
             }
             .buttonStyle(.plain)
@@ -195,7 +195,7 @@ struct PrayerTimesView: View {
                 .tint(AthanTheme.accent)
             Text("Loading prayer times...")
                 .font(.subheadline)
-                .foregroundStyle(Color.white.opacity(0.3))
+                .foregroundStyle(AthanTheme.textSecondary)
             Spacer()
         }
         .padding(.top, 24)
@@ -246,11 +246,11 @@ private struct NextPrayerCard: View {
 
                     Text(allPassed ? "Fajr" : prayer.displayName)
                         .font(.system(size: 36, weight: .regular, design: .serif))
-                        .foregroundStyle(Color.white.opacity(0.95))
+                        .foregroundStyle(AthanTheme.textPrimary)
                 }
                 Spacer()
                 SunIconView()
-                    .frame(width: 44, height: 44)
+                    .frame(width: 52, height: 52)
             }
             .padding(.bottom, 24)
 
@@ -258,13 +258,13 @@ private struct NextPrayerCard: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(countdown ?? "--:--")
                     .font(.system(size: 72, weight: .light, design: .serif))
-                    .foregroundStyle(Color.white.opacity(0.95))
+                    .foregroundStyle(AthanTheme.textPrimary)
                     .monospacedDigit()
                     .contentTransition(.numericText())
 
                 Text(allPassed ? "UNTIL FAJR" : "REMAINING")
                     .font(.system(size: 13, weight: .light))
-                    .foregroundStyle(Color.white.opacity(0.35))
+                    .foregroundStyle(AthanTheme.textSecondary)
                     .tracking(1)
                     .padding(.leading, 4)
             }
@@ -277,9 +277,9 @@ private struct NextPrayerCard: View {
             // Bottom: adhan time + done button
             HStack {
                 (Text(allPassed ? "Fajr at " : "Adhan at ")
-                    .foregroundStyle(Color.white.opacity(0.4))
+                    .foregroundStyle(AthanTheme.textSecondary)
                  + Text(timeString)
-                    .foregroundStyle(Color.white.opacity(0.6)))
+                    .foregroundStyle(AthanTheme.textPrimary.opacity(0.7)))
                 .font(.system(size: 15))
 
                 Spacer()
@@ -335,26 +335,51 @@ private struct NextPrayerCard: View {
 private struct SunIconView: View {
     var body: some View {
         ZStack {
+            // Outer glow halo
+            Circle()
+                .fill(AthanTheme.accent.opacity(0.08))
+                .frame(width: 32, height: 32)
+                .offset(y: -3)
+
+            // Main orb with 3D gradient (bright top-left highlight → deep bottom-right)
             Circle()
                 .fill(
                     RadialGradient(
-                        colors: [AthanTheme.accent.opacity(0.9), AthanTheme.accentDeep.opacity(0.6)],
-                        center: .center,
+                        colors: [
+                            AthanTheme.accent.opacity(1.0),
+                            AthanTheme.accent.opacity(0.8),
+                            AthanTheme.accentDeep.opacity(0.5)
+                        ],
+                        center: UnitPoint(x: 0.35, y: 0.35),
                         startRadius: 0,
-                        endRadius: 8
+                        endRadius: 12
                     )
                 )
-                .frame(width: 16, height: 16)
-                .shadow(color: AthanTheme.accent.opacity(0.3), radius: 8)
-                .offset(y: -4)
+                .frame(width: 22, height: 22)
+                .overlay {
+                    // Specular highlight for 3D depth
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color.white.opacity(0.5), .clear],
+                                center: UnitPoint(x: 0.3, y: 0.3),
+                                startRadius: 0,
+                                endRadius: 6
+                            )
+                        )
+                        .frame(width: 22, height: 22)
+                }
+                .shadow(color: AthanTheme.accent.opacity(0.5), radius: 10, y: 2)
+                .offset(y: -3)
 
+            // Horizon line
             LinearGradient(
                 colors: [.clear, AthanTheme.accent.opacity(0.5), .clear],
                 startPoint: .leading,
                 endPoint: .trailing
             )
-            .frame(width: 32, height: 1)
-            .offset(y: 8)
+            .frame(width: 38, height: 1)
+            .offset(y: 10)
         }
     }
 }

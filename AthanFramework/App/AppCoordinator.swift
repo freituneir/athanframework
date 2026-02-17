@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import WidgetKit
 
 /// Orchestrates the daily cycle: fetch prayer times → schedule alarms → sync calendar.
 /// This is the single entry point for refreshing all data.
@@ -89,7 +90,8 @@ final class AppCoordinator {
                 try await alarmService.reconcileAlarms(
                     prayerTimes: todayTimes,
                     configs: configs,
-                    tomorrowFajrTime: tomorrowTimes?.fajr
+                    tomorrowFajrTime: tomorrowTimes?.fajr,
+                    athanSound: preferences.selectedAthanSound
                 )
 
                 // 5. Sync to calendar if enabled and access is granted — 30 days ahead
@@ -120,7 +122,13 @@ final class AppCoordinator {
                 }
             }
 
-            // 6. Schedule tomorrow's Fajr for overnight coverage.
+            // 6. Update app badge, home screen widget, and theme
+            let cachedTodayForBadge = prayerTimeService.getCachedTimes(for: today)
+            BadgeService.updateBadge(cloudContext: cloudContext, todayTimes: cachedTodayForBadge)
+            writePrayerDataToAppGroup(todayTimes: cachedTodayForBadge)
+            writeThemeToAppGroup(preferences.selectedTheme)
+
+            // 7. Schedule tomorrow's Fajr for overnight coverage.
             //    Only schedule if today's Fajr has already passed (avoid double-scheduling).
             //    Respects usesSunriseOffset: if enabled, alarm is relative to tomorrow's sunrise.
             //    Protects active Fajr alarm — don't cancel if AlarmKit still knows about it.
@@ -158,7 +166,8 @@ final class AppCoordinator {
                         at: scheduledTime,
                         config: fajrConfig,
                         nextPrayer: .dhuhr,
-                        nextPrayerTime: tomorrowTimesForFajr.dhuhr
+                        nextPrayerTime: tomorrowTimesForFajr.dhuhr,
+                        athanSound: preferences.selectedAthanSound
                     )
                 }
             }
@@ -204,10 +213,12 @@ final class AppCoordinator {
 
         do {
             let configs = try getOrCreateAlarmConfigs()
+            let preferences = try getOrCreatePreferences()
             try await alarmService.reconcileAlarms(
                 prayerTimes: todayTimes,
                 configs: configs,
-                tomorrowFajrTime: tomorrowTimes?.fajr
+                tomorrowFajrTime: tomorrowTimes?.fajr,
+                athanSound: preferences.selectedAthanSound
             )
         } catch {
             print("[AppCoordinator] reconcileAlarmsFromCache failed: \(error)")
@@ -230,6 +241,33 @@ final class AppCoordinator {
     /// Cancels the active alarm for a prayer — called when marking done in the app.
     func cancelAlarm(for prayer: Prayer) async throws {
         try await alarmService.cancelAlarm(for: prayer)
+    }
+
+    /// Writes today's prayer times + completions to App Group UserDefaults for the home screen widget.
+    func writePrayerDataToAppGroup(todayTimes: DailyPrayerTimes?) {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+
+        var timesDict: [String: Double] = [:]
+        if let times = todayTimes {
+            for prayer in Prayer.allCases {
+                if let t = times.time(for: prayer) {
+                    timesDict[prayer.rawValue] = t.timeIntervalSince1970
+                }
+            }
+            if let sunrise = times.sunrise {
+                timesDict["sunrise"] = sunrise.timeIntervalSince1970
+            }
+        }
+        suite.set(timesDict, forKey: AppConstants.AppGroup.prayerTimesKey)
+
+        // Reload widget timelines
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// Writes selected theme to App Group so widgets and LAs can read it.
+    func writeThemeToAppGroup(_ theme: ColorTheme) {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+        suite.set(theme.rawValue, forKey: AppConstants.AppGroup.themeKey)
     }
 
     func getOrCreateAlarmConfigs() throws -> [PrayerAlarmConfig] {

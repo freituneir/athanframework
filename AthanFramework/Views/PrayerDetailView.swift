@@ -19,7 +19,7 @@ struct PrayerDetailView: View {
                 HStack(spacing: 16) {
                     Image(systemName: prayer.sfSymbol)
                         .font(.system(size: 36))
-                        .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex).gradient)
+                        .foregroundStyle(AthanTheme.accent.gradient)
                         .frame(width: 48, height: 48)
                         .accessibilityHidden(true)
 
@@ -47,7 +47,7 @@ struct PrayerDetailView: View {
                         Label("Alarm", systemImage: config.isEnabled ? "bell.fill" : "bell.slash")
                             .foregroundStyle(config.isEnabled ? .primary : .secondary)
                     }
-                    .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                    .tint(AthanTheme.accent)
                     .sensoryFeedback(.impact(flexibility: .soft), trigger: config.isEnabled)
                     .accessibilityLabel("Alarm")
                     .accessibilityValue(config.isEnabled ? "Enabled" : "Disabled")

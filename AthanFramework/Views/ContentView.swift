@@ -21,7 +21,11 @@ struct ContentView: View {
 }
 
 /// Tab-based navigation: Today, Reminders, Settings.
+/// Uses @AppStorage to reactively re-render when the theme changes.
 struct MainTabView: View {
+    @AppStorage(AppConstants.AppGroup.themeKey, store: UserDefaults(suiteName: AppConstants.AppGroup.suiteName))
+    private var themeRaw: String = ColorTheme.green.rawValue
+
     var body: some View {
         TabView {
             Tab("Today", systemImage: "sun.max.fill") {
@@ -34,6 +38,7 @@ struct MainTabView: View {
                 SettingsView()
             }
         }
+        .id(themeRaw)
         .tint(AthanTheme.accent)
         .preferredColorScheme(.dark)
     }

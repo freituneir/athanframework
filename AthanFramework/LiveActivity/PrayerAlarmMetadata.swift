@@ -12,8 +12,10 @@ struct PrayerAlarmMetadata: AlarmMetadata {
     var nextPrayerName: String
     /// Pre-formatted time string for the next prayer, e.g. "7:05 PM".
     var nextPrayerTimeString: String
-    /// Snooze interval in seconds — read by SnoozePrayerIntent to schedule the re-fire.
+    /// Snooze interval in seconds — used as postAlert for AlarmKit native snooze.
     var snoozeDurationSeconds: Int
+    /// Actual preAlert countdown window in seconds — used by LAProgressBar for accurate fill.
+    var preAlertSeconds: Double
 
     init() {
         self.prayerName = ""
@@ -21,13 +23,15 @@ struct PrayerAlarmMetadata: AlarmMetadata {
         self.nextPrayerName = ""
         self.nextPrayerTimeString = ""
         self.snoozeDurationSeconds = 300
+        self.preAlertSeconds = 300
     }
 
-    init(prayer: Prayer, fireDate: Date, nextPrayer: Prayer? = nil, nextPrayerTimeString: String = "", snoozeDurationSeconds: Int = 300) {
+    init(prayer: Prayer, fireDate: Date, nextPrayer: Prayer? = nil, nextPrayerTimeString: String = "", snoozeDurationSeconds: Int = 300, preAlertSeconds: Double = 300) {
         self.prayerName = prayer.rawValue
         self.fireDate = fireDate
         self.nextPrayerName = nextPrayer?.rawValue ?? ""
         self.nextPrayerTimeString = nextPrayerTimeString
         self.snoozeDurationSeconds = snoozeDurationSeconds
+        self.preAlertSeconds = preAlertSeconds
     }
 }

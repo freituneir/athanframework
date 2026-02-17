@@ -8,5 +8,6 @@ struct AthanWidgetBundle: WidgetBundle {
     var body: some Widget {
         AthanAlarmLiveActivity()
         ReminderAlarmLiveActivity()
+        PrayerTimesWidget()
     }
 }

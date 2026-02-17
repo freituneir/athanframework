@@ -29,5 +29,8 @@ enum AppConstants {
     enum AppGroup {
         static let suiteName = "group.com.athanframework.shared"
         static let completedKey = "completedItems"
+        static let prayerTimesKey = "widgetPrayerTimes"
+        static let nextPrayerKey = "widgetNextPrayer"
+        static let themeKey = "selectedTheme"
     }
 }

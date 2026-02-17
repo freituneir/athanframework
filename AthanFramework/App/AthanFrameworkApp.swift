@@ -84,7 +84,7 @@ struct AthanFrameworkApp: App {
 
         // Create ViewModels
         self.prayerTimesViewModel = PrayerTimesViewModel(coordinator: coord, cloudContext: cloudContext)
-        self.settingsViewModel = SettingsViewModel(cloudContext: cloudContext)
+        self.settingsViewModel = SettingsViewModel(cloudContext: cloudContext, alarmService: alarm)
         self.onboardingViewModel = OnboardingViewModel(
             locationService: location,
             alarmService: alarm,

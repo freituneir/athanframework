@@ -22,7 +22,7 @@ struct CustomRemindersView: View {
                             Label("Add Reminder", systemImage: "plus")
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                        .tint(AthanTheme.accent)
                     }
                 } else {
                     List {
@@ -98,7 +98,7 @@ struct ReminderRow: View {
                         .font(.title2)
                         .foregroundStyle(
                             isCompleted
-                                ? Color(hex: AppConstants.Defaults.tintColorHex)
+                                ? AthanTheme.accent
                                 : Color.secondary.opacity(0.4)
                         )
                         .contentShape(Circle())
@@ -150,7 +150,7 @@ struct ReminderRow: View {
                 Image(systemName: reminder.isEnabled ? "bell.fill" : "bell.slash")
                     .foregroundStyle(
                         reminder.isEnabled
-                            ? Color(hex: AppConstants.Defaults.tintColorHex)
+                            ? AthanTheme.accent
                             : .secondary
                     )
                     .symbolEffect(.bounce, value: bellAnimating)
@@ -348,7 +348,7 @@ struct ReminderFormContent: View {
                 Toggle(isOn: $isRecurring) {
                     Label("Recurring", systemImage: "repeat")
                 }
-                .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+                .tint(AthanTheme.accent)
                 .accessibilityLabel("Recurring reminder")
 
                 if isRecurring {
@@ -421,7 +421,7 @@ struct DayPicker: View {
                         .frame(width: 36, height: 36)
                         .background(
                             selectedDays.contains(day)
-                                ? Color(hex: AppConstants.Defaults.tintColorHex)
+                                ? AthanTheme.accent
                                 : Color(.systemGray5)
                         )
                         .foregroundStyle(selectedDays.contains(day) ? .white : .primary)

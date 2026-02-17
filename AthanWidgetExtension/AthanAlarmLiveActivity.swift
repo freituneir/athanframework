@@ -54,15 +54,15 @@ struct AthanAlarmLiveActivity: Widget {
                     if postAlert {
                         Text("\(prayer?.displayName ?? "Prayer") \u{2014} Pray Now")
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.95))
+                            .foregroundStyle(AthanTheme.textPrimary)
                     } else {
                         Text("\(prayer?.displayName ?? "Prayer") in")
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.95))
+                            .foregroundStyle(AthanTheme.textPrimary)
 
                         Text("Adhan at \(attributes.metadata?.fireDate.formatted(date: .omitted, time: .shortened) ?? "")")
                             .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(AthanTheme.textSecondary)
                     }
                 }
 
@@ -72,8 +72,8 @@ struct AthanAlarmLiveActivity: Widget {
                     .font(.system(size: 34, weight: .light))
             }
 
-            // Progress bar
-            LAProgressBar(state: state, metadata: attributes.metadata)
+            // Progress bar (pre-alert only)
+            LAProgressBar(state: state, metadata: attributes.metadata, isPostAlert: postAlert)
 
             // Bottom row
             HStack {
@@ -87,9 +87,9 @@ struct AthanAlarmLiveActivity: Widget {
                        let nextTimeStr = attributes.metadata?.nextPrayerTimeString,
                        !nextTimeStr.isEmpty {
                         (Text("\(nextPrayer.displayName) at ")
-                            .foregroundStyle(.white.opacity(0.35))
+                            .foregroundStyle(AthanTheme.textSecondary.opacity(0.85))
                          + Text(nextTimeStr)
-                            .foregroundStyle(.white.opacity(0.55)))
+                            .foregroundStyle(AthanTheme.textPrimary.opacity(0.6)))
                         .font(.system(size: 13))
                     }
                     Spacer()
@@ -142,31 +142,20 @@ struct AthanAlarmLiveActivity: Widget {
         let prayerName = attributes.metadata?.prayerName ?? ""
         let prayer = Prayer(rawValue: prayerName)
 
-        if postAlert {
-            HStack(spacing: 4) {
-                if let prayer {
-                    Image(systemName: prayer.sfSymbol)
-                        .foregroundStyle(AthanTheme.accent)
-                }
-                Text("\(prayer?.displayName ?? "Prayer") \u{2014} Pray Now")
+        HStack(spacing: 4) {
+            if let prayer {
+                Image(systemName: prayer.sfSymbol)
+                    .foregroundStyle(AthanTheme.accent)
             }
-            .font(.title3)
-            .fontWeight(.semibold)
-            .lineLimit(1)
-            .padding(.leading, 6)
-        } else {
-            HStack(spacing: 4) {
-                if let prayer {
-                    Image(systemName: prayer.sfSymbol)
-                        .foregroundStyle(AthanTheme.accent)
-                }
-                Text("\(prayer?.displayName ?? "Prayer") in")
-            }
-            .font(.title3)
-            .fontWeight(.semibold)
-            .lineLimit(1)
-            .padding(.leading, 6)
+            Text(postAlert
+                ? (prayer?.displayName ?? "Prayer")
+                : "\(prayer?.displayName ?? "Prayer") in")
         }
+        .font(.title3)
+        .fontWeight(.semibold)
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .padding(.leading, 6)
     }
 
     @ViewBuilder
@@ -269,34 +258,51 @@ struct AthanAlarmLiveActivity: Widget {
 
 private struct LAAppIconView: View {
     var body: some View {
-        RoundedRectangle(cornerRadius: 7)
+        RoundedRectangle(cornerRadius: 8)
             .fill(
                 LinearGradient(
-                    colors: [Color(hex: "#0a2e2a"), Color(hex: "#051a17")],
+                    colors: [AthanTheme.bgLight, AthanTheme.bgDark],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
             )
-            .frame(width: 28, height: 28)
+            .frame(width: 32, height: 32)
             .overlay {
                 ZStack {
+                    // Orb with 3D highlight
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [AthanTheme.accent.opacity(0.9), AthanTheme.accentDeep.opacity(0.5)],
-                                center: .center,
+                                colors: [
+                                    AthanTheme.accent,
+                                    AthanTheme.accent.opacity(0.7),
+                                    AthanTheme.accentDeep.opacity(0.4)
+                                ],
+                                center: UnitPoint(x: 0.35, y: 0.35),
                                 startRadius: 0,
-                                endRadius: 5
+                                endRadius: 7
                             )
                         )
-                        .frame(width: 10, height: 10)
+                        .frame(width: 12, height: 12)
+                        .overlay {
+                            Circle()
+                                .fill(
+                                    RadialGradient(
+                                        colors: [Color.white.opacity(0.4), .clear],
+                                        center: UnitPoint(x: 0.3, y: 0.3),
+                                        startRadius: 0,
+                                        endRadius: 4
+                                    )
+                                )
+                                .frame(width: 12, height: 12)
+                        }
+                        .shadow(color: AthanTheme.accent.opacity(0.5), radius: 5)
                         .offset(y: -3)
-                        .shadow(color: AthanTheme.accent.opacity(0.4), radius: 4)
 
                     Rectangle()
                         .fill(AthanTheme.accent.opacity(0.4))
-                        .frame(width: 18, height: 1)
-                        .offset(y: 4)
+                        .frame(width: 20, height: 1)
+                        .offset(y: 5)
                 }
             }
     }
@@ -307,43 +313,37 @@ private struct LAAppIconView: View {
 private struct LAProgressBar: View {
     var state: AlarmPresentationState
     var metadata: PrayerAlarmMetadata?
+    var isPostAlert: Bool
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white.opacity(0.08))
-
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(
-                        LinearGradient(
-                            colors: [AthanTheme.accent, AthanTheme.accentDeep],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: max(0, geo.size.width * CGFloat(progress)))
+        // Hide progress bar in post-alert (pray now) state
+        if !isPostAlert {
+            switch state.mode {
+            case .countdown(let countdown):
+                // ProgressView(timerInterval:) animates in Live Activities —
+                // unlike Date.now which evaluates once and becomes stale.
+                let preAlert = metadata?.preAlertSeconds ?? 300
+                let startDate = countdown.fireDate.addingTimeInterval(-preAlert)
+                ProgressView(
+                    timerInterval: startDate...countdown.fireDate,
+                    countsDown: false,
+                    label: { EmptyView() },
+                    currentValueLabel: { EmptyView() }
+                )
+                .progressViewStyle(.linear)
+                .tint(AthanTheme.accent)
+                .frame(height: 4)
+            case .paused(let pausedState):
+                let total = pausedState.totalCountdownDuration
+                let elapsed = pausedState.previouslyElapsedDuration
+                let fraction = total > 0 ? min(elapsed / total, 1) : 0
+                ProgressView(value: fraction)
+                    .progressViewStyle(.linear)
+                    .tint(AthanTheme.accent)
+                    .frame(height: 4)
+            default:
+                EmptyView()
             }
-        }
-        .frame(height: 4)
-    }
-
-    private var progress: Double {
-        switch state.mode {
-        case .countdown(let countdown):
-            let remaining = countdown.fireDate.timeIntervalSince(Date.now)
-            // Assume 5 minute pre-alert window
-            let total: Double = 300
-            let elapsed = total - remaining
-            return min(max(elapsed / total, 0), 1)
-        case .alert:
-            return 1.0
-        case .paused(let pausedState):
-            let total = pausedState.totalCountdownDuration
-            let elapsed = pausedState.previouslyElapsedDuration
-            return total > 0 ? min(elapsed / total, 1) : 0
-        @unknown default:
-            return 0
         }
     }
 }

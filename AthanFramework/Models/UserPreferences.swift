@@ -22,6 +22,12 @@ final class UserPreferences {
     var calendarSyncAhead: Bool = false
     var selectedCalendarID: String = ""
 
+    // Sound
+    var selectedAthanSoundRaw: String = AthanSound.defaultTone.rawValue
+
+    // Theme
+    var selectedThemeRaw: String = ColorTheme.green.rawValue
+
     // Tracking
     var onboardingCompleted: Bool = false
     var lastRefreshDate: Date?
@@ -36,5 +42,15 @@ final class UserPreferences {
     var school: AsrSchool {
         get { AsrSchool(rawValue: schoolRaw) ?? .shafi }
         set { schoolRaw = newValue.rawValue }
+    }
+
+    var selectedAthanSound: AthanSound {
+        get { AthanSound(rawValue: selectedAthanSoundRaw) ?? .defaultTone }
+        set { selectedAthanSoundRaw = newValue.rawValue }
+    }
+
+    var selectedTheme: ColorTheme {
+        get { ColorTheme(rawValue: selectedThemeRaw) ?? .green }
+        set { selectedThemeRaw = newValue.rawValue }
     }
 }

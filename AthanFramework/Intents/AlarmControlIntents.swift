@@ -66,60 +66,16 @@ struct SnoozePrayerIntent: LiveActivityIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        // 1. Keep original LA alive by transitioning to countdown
+        // With .countdown secondaryButtonBehavior, AlarmKit handles snooze natively
+        // by restarting the countdown with the postAlert duration. This intent is
+        // kept for backward compatibility but should not be invoked.
         if let uuid = UUID(uuidString: alarmID) {
             do {
                 try AlarmManager.shared.countdown(id: uuid)
             } catch {
-                print("[AlarmKit] Snooze countdown failed: \(error)")
+                print("[AlarmKit] Snooze countdown fallback failed: \(error)")
             }
         }
-
-        // 2. Read snooze duration from App Group UserDefaults
-        let snoozeDuration: TimeInterval
-        if let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName),
-           let durations = suite.dictionary(forKey: "snoozeDurations") as? [String: Int],
-           let duration = durations[entityName] {
-            snoozeDuration = TimeInterval(duration)
-        } else {
-            // Fallback: Fajr=120s, others=300s
-            snoozeDuration = entityName == Prayer.fajr.rawValue
-                ? TimeInterval(AppConstants.Defaults.snoozeDurationFajr)
-                : TimeInterval(AppConstants.Defaults.snoozeDurationOther)
-        }
-
-        // 3. Schedule a NEW alert-only alarm (Apple's scheduleAlertOnlyExample pattern)
-        do {
-            let snoozeID = UUID()
-            let snoozeTime = Date.now.addingTimeInterval(snoozeDuration)
-
-            let alertContent = AlarmPresentation.Alert(
-                title: LocalizedStringResource(stringLiteral: "\(entityName) — Snooze"),
-                stopButton: .prayerDismissButton,
-                secondaryButton: .prayerSnoozeButton,
-                secondaryButtonBehavior: .custom
-            )
-
-            let attributes = AlarmAttributes<PrayerAlarmMetadata>(
-                presentation: AlarmPresentation(alert: alertContent),
-                tintColor: Color(hex: AppConstants.Defaults.tintColorHex)
-            )
-
-            let stopIntent = DismissPrayerIntent(alarmID: snoozeID.uuidString, entityName: entityName)
-            let secondaryIntent = SnoozePrayerIntent(alarmID: snoozeID.uuidString, entityName: entityName)
-
-            let configuration = AlarmManager.AlarmConfiguration(
-                schedule: .fixed(snoozeTime),
-                attributes: attributes,
-                stopIntent: stopIntent,
-                secondaryIntent: secondaryIntent
-            )
-
-            _ = try await AlarmManager.shared.schedule(id: snoozeID, configuration: configuration)
-        } catch {
-            print("[AlarmKit] Snooze schedule failed: \(error)")
-        }
-
         return .result()
     }
 }

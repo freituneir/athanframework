@@ -3,6 +3,7 @@ import SwiftData
 import SwiftUI
 import UserNotifications
 import AlarmKit
+import ActivityKit
 
 /// Schedules and manages AlarmKit alarms for the five daily prayers.
 @Observable
@@ -124,7 +125,8 @@ final class AlarmSchedulingService {
     func reconcileAlarms(
         prayerTimes: DailyPrayerTimes,
         configs: [PrayerAlarmConfig],
-        tomorrowFajrTime: Date? = nil
+        tomorrowFajrTime: Date? = nil,
+        athanSound: AthanSound = .defaultTone
     ) async throws {
         // DEBUG: verbose reconcile logging
         DebugLog.shared.log("reconcileAlarms: starting, \(configs.count) configs")
@@ -191,7 +193,8 @@ final class AlarmSchedulingService {
                 at: scheduledTime,
                 config: config,
                 nextPrayer: nextPrayer,
-                nextPrayerTime: nextPrayerTime
+                nextPrayerTime: nextPrayerTime,
+                athanSound: athanSound
             )
         }
     }
@@ -234,7 +237,8 @@ final class AlarmSchedulingService {
         at time: Date,
         config: PrayerAlarmConfig,
         nextPrayer: Prayer? = nil,
-        nextPrayerTime: Date? = nil
+        nextPrayerTime: Date? = nil,
+        athanSound: AthanSound = .defaultTone
     ) async throws {
         // Kill any lingering post-alert LAs from previous prayers
         stopPastDuePrayerAlarms()
@@ -247,7 +251,7 @@ final class AlarmSchedulingService {
             title: LocalizedStringResource(stringLiteral: "\(prayer.displayName) Prayer"),
             stopButton: .prayerDismissButton,
             secondaryButton: .prayerSnoozeButton,
-            secondaryButtonBehavior: .custom
+            secondaryButtonBehavior: .countdown
         )
 
         let countdownPresentation = AlarmPresentation.Countdown(
@@ -260,6 +264,14 @@ final class AlarmSchedulingService {
         )
 
         let tintColor = Color(hex: config.tintColorHex)
+
+        // preAlert: LA countdown appears before alarm, capped at actual time remaining
+        let secondsUntil = time.timeIntervalSince(.now)
+        let preAlertSeconds = min(Self.preAlertWindow, max(secondsUntil, 30))
+
+        // postAlert = snooze duration (AlarmKit restarts countdown with this interval on snooze tap)
+        let postAlertSeconds = TimeInterval(config.snoozeDurationSeconds)
+
         // Format next prayer time for Live Activity display
         let nextPrayerTimeStr: String
         if let nextTime = nextPrayerTime {
@@ -273,7 +285,8 @@ final class AlarmSchedulingService {
             fireDate: time,
             nextPrayer: nextPrayer,
             nextPrayerTimeString: nextPrayerTimeStr,
-            snoozeDurationSeconds: config.snoozeDurationSeconds
+            snoozeDurationSeconds: config.snoozeDurationSeconds,
+            preAlertSeconds: preAlertSeconds
         )
 
         let attributes = AlarmAttributes(
@@ -281,19 +294,6 @@ final class AlarmSchedulingService {
             metadata: metadata,
             tintColor: tintColor
         )
-
-        // preAlert: LA countdown appears before alarm, capped at actual time remaining
-        let secondsUntil = time.timeIntervalSince(.now)
-        let preAlertSeconds = min(Self.preAlertWindow, max(secondsUntil, 30))
-
-        // postAlert: gap to next prayer (minus preAlert window), fallback 4 hours
-        let postAlertSeconds: TimeInterval
-        if let nextTime = nextPrayerTime, nextTime > time {
-            let gapToNext = nextTime.timeIntervalSince(time)
-            postAlertSeconds = max(60, gapToNext - Self.preAlertWindow)
-        } else {
-            postAlertSeconds = 4 * 60 * 60
-        }
 
         // Schedule offset: AlarmKit starts the countdown at the schedule time,
         // then fires the alarm after preAlert elapses. Offset by -preAlert so
@@ -315,12 +315,13 @@ final class AlarmSchedulingService {
             schedule: schedule,
             attributes: attributes,
             stopIntent: stopIntent,
-            secondaryIntent: secondaryIntent
+            secondaryIntent: secondaryIntent,
+            sound: athanSound.alertSound
         )
 
         do {
             _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: configuration)
-            DebugLog.shared.log("scheduleAlarm: SUCCESS \(prayer.displayName) ID=\(alarmID), preAlert=\(Int(preAlertSeconds))s")
+            DebugLog.shared.log("scheduleAlarm: SUCCESS \(prayer.displayName) ID=\(alarmID), preAlert=\(Int(preAlertSeconds))s, sound=\(athanSound.rawValue)")
         } catch {
             DebugLog.shared.error("scheduleAlarm: FAILED \(prayer.displayName): \(error)")
             throw error
@@ -329,60 +330,23 @@ final class AlarmSchedulingService {
         persistAlarmID(alarmID, for: prayer, fireDate: time)
     }
 
-    // MARK: - Snooze Alarm (alert-only, no Live Activity)
-
-    /// Schedules a new alert-only alarm for snooze — fires after `snoozeDuration` seconds.
-    /// Follows Apple sample's `scheduleAlertOnlyExample()` pattern: no countdownDuration, no LA.
-    func scheduleSnoozeAlarm(for prayer: Prayer, snoozeDuration: TimeInterval) async throws {
-        let snoozeTime = Date.now.addingTimeInterval(snoozeDuration)
-        let snoozeID = UUID()
-
-        let alertContent = AlarmPresentation.Alert(
-            title: LocalizedStringResource(stringLiteral: "\(prayer.displayName) — Snooze"),
-            stopButton: .prayerDismissButton,
-            secondaryButton: .prayerSnoozeButton,
-            secondaryButtonBehavior: .custom
-        )
-
-        let attributes = AlarmAttributes<PrayerAlarmMetadata>(
-            presentation: AlarmPresentation(alert: alertContent),
-            tintColor: Color(hex: AppConstants.Defaults.tintColorHex)
-        )
-
-        let stopIntent = DismissPrayerIntent(alarmID: snoozeID.uuidString, entityName: prayer.rawValue)
-        let secondaryIntent = SnoozePrayerIntent(alarmID: snoozeID.uuidString, entityName: prayer.rawValue)
-
-        let configuration = AlarmManager.AlarmConfiguration(
-            schedule: .fixed(snoozeTime),
-            attributes: attributes,
-            stopIntent: stopIntent,
-            secondaryIntent: secondaryIntent
-        )
-
-        do {
-            _ = try await AlarmManager.shared.schedule(id: snoozeID, configuration: configuration)
-            DebugLog.shared.log("scheduleSnoozeAlarm: SUCCESS \(prayer.displayName) in \(Int(snoozeDuration))s, ID=\(snoozeID)")
-        } catch {
-            DebugLog.shared.error("scheduleSnoozeAlarm: FAILED \(prayer.displayName): \(error)")
-            throw error
-        }
-    }
-
     // MARK: - Test Alarm (Verification)
 
-    /// Test F: Full config with corrected schedule offset.
-    /// Schedule is offset by -preAlert so countdown starts early and alarm fires at fireTime.
+    /// Test F: Full config with corrected schedule offset + native snooze.
     /// Expected: countdown LA at +1 min, counts down 2 min, alarm fires at +3 min.
-    func scheduleTestAlarmCorrected(index: Int) async throws -> Date {
+    /// Snooze: tapping "Snooze" restarts countdown for 60s, then alarm re-fires.
+    /// Same LA persists through snooze — no new widget/notification created.
+    func scheduleTestAlarmCorrected(index: Int, athanSound: AthanSound = .defaultTone) async throws -> Date {
         let fireTime = Date.now.addingTimeInterval(3 * 60)
         let alarmID = UUID()
         let preAlertSeconds: TimeInterval = 2 * 60
+        let snoozeSeconds: TimeInterval = 60 // short for testing
 
         let alertPresentation = AlarmPresentation.Alert(
             title: "Test F-\(index)",
             stopButton: .prayerDismissButton,
             secondaryButton: .prayerSnoozeButton,
-            secondaryButtonBehavior: .custom
+            secondaryButtonBehavior: .countdown
         )
         let countdownPresentation = AlarmPresentation.Countdown(
             title: "Test F-\(index)"
@@ -395,7 +359,8 @@ final class AlarmSchedulingService {
             prayer: .fajr,
             fireDate: fireTime,
             nextPrayer: .dhuhr,
-            snoozeDurationSeconds: 300
+            snoozeDurationSeconds: Int(snoozeSeconds),
+            preAlertSeconds: preAlertSeconds
         )
         let attributes = AlarmAttributes(
             presentation: presentation,
@@ -409,7 +374,7 @@ final class AlarmSchedulingService {
 
         let countdownDuration = Alarm.CountdownDuration(
             preAlert: preAlertSeconds,
-            postAlert: 15 * 60
+            postAlert: snoozeSeconds
         )
 
         let stopIntent = DismissPrayerIntent(alarmID: alarmID.uuidString, entityName: "fajr")
@@ -420,12 +385,13 @@ final class AlarmSchedulingService {
             schedule: schedule,
             attributes: attributes,
             stopIntent: stopIntent,
-            secondaryIntent: secondaryIntent
+            secondaryIntent: secondaryIntent,
+            sound: athanSound.alertSound
         )
 
         _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: configuration)
         let scheduleStart = fireTime.addingTimeInterval(-preAlertSeconds)
-        DebugLog.shared.log("TestF: scheduled ID=\(alarmID), countdown at \(scheduleStart), alarm at \(fireTime), preAlert=\(Int(preAlertSeconds))s")
+        DebugLog.shared.log("TestF: scheduled ID=\(alarmID), countdown at \(scheduleStart), alarm at \(fireTime), preAlert=\(Int(preAlertSeconds))s, snooze=\(Int(snoozeSeconds))s")
         persistAlarmID(alarmID, forKey: "test-\(index)", fireDate: fireTime)
         return fireTime
     }
