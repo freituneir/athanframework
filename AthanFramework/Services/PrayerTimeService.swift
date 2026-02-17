@@ -63,6 +63,10 @@ final class PrayerTimeService {
                 throw PrayerTimeServiceError.badServerResponse
             }
             response = try JSONDecoder().decode(AladhanCalendarResponse.self, from: data)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw urlError
         } catch {
             lastError = error
             throw error

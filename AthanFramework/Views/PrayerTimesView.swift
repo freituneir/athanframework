@@ -1,142 +1,70 @@
 import SwiftUI
 import SwiftData
 
-/// Main screen showing today's 5 prayer times with alarm status.
+// MARK: - Main Prayer Times Screen
+
 struct PrayerTimesView: View {
     @Environment(PrayerTimesViewModel.self) private var viewModel
     @Environment(\.scenePhase) private var scenePhase
     @Query private var preferences: [UserPreferences]
 
-    private var locationName: String {
-        preferences.first?.locationName ?? ""
-    }
-
     var body: some View {
         NavigationStack {
-            List {
-                // Location + Hijri date header
-                Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if !locationName.isEmpty {
-                            HStack(spacing: 6) {
-                                Image(systemName: "location.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(Color(hex: AppConstants.Defaults.tintColorHex))
-                                Text(locationName)
-                                    .font(.headline)
-                            }
-                            .accessibilityElement(children: .combine)
-                            .accessibilityLabel("Location: \(locationName)")
-                        }
+            ZStack {
+                AthanTheme.backgroundGradient.ignoresSafeArea()
+                ambientGlows
+                GeometricAccentView()
+                    .opacity(0.04)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
 
-                        if !viewModel.hijriDate.isEmpty {
-                            Text(viewModel.hijriDate)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .accessibilityLabel("Islamic date: \(viewModel.hijriDate)")
-                        }
-                    }
-                    .listRowBackground(Color.clear)
-                }
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        dateSection
+                            .padding(.top, 20)
+                            .padding(.bottom, 48)
 
-                // Countdown to next prayer
-                if let next = viewModel.nextPrayer,
-                   let countdown = viewModel.countdownToNext {
-                    Section {
-                        HStack(spacing: 12) {
-                            Image(systemName: next.sfSymbol)
-                                .font(.title2)
-                                .foregroundStyle(Color(hex: next.colorHex))
-                                .frame(width: 32)
-                                .accessibilityHidden(true)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Next: \(next.displayName)")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                Text(countdown)
-                                    .font(.title2)
-                                    .fontWeight(.semibold)
-                                    .monospacedDigit()
-                                    .contentTransition(.numericText())
-                            }
-
-                            Spacer()
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel("Next prayer is \(next.displayName) in \(countdown)")
-                    }
-                }
-
-                // Prayer rows
-                Section {
-                    ForEach(Prayer.allCases) { prayer in
-                        PrayerRow(
-                            prayer: prayer,
-                            timeString: viewModel.timeString(for: prayer),
-                            isEnabled: viewModel.alarmConfigs.first(where: {
-                                $0.prayerName == prayer.rawValue
-                            })?.isEnabled ?? true,
-                            hasPassed: viewModel.hasPassed(prayer),
-                            isNext: viewModel.nextPrayer == prayer,
-                            offsetDescription: viewModel.offsetDescription(for: prayer),
-                            isCompleted: viewModel.isCompleted(prayer),
-                            onToggleCompletion: { viewModel.toggleCompletion(for: prayer) },
-                            onToggle: { viewModel.toggleAlarm(for: prayer) }
-                        )
-
-                        // Sunrise row between Fajr and Dhuhr
-                        if prayer == .fajr {
-                            SunriseRow(
-                                timeString: viewModel.sunriseTimeString,
-                                hasPassed: viewModel.sunriseHasPassed
+                        if let next = viewModel.nextPrayer {
+                            NextPrayerCard(
+                                prayer: next,
+                                timeString: viewModel.timeString(for: next),
+                                countdown: viewModel.countdownFormatted,
+                                progress: viewModel.progressToNextPrayer,
+                                allPassed: false,
+                                isCompleted: viewModel.isCompleted(next),
+                                onDone: { viewModel.toggleCompletion(for: next) }
+                            )
+                        } else {
+                            NextPrayerCard(
+                                prayer: .fajr,
+                                timeString: viewModel.tomorrowFajrTimeString,
+                                countdown: viewModel.countdownFormatted,
+                                progress: viewModel.progressToNextPrayer,
+                                allPassed: true,
+                                isCompleted: false,
+                                onDone: {}
                             )
                         }
-                    }
-                }
 
-                // Error display
-                if let error = viewModel.errorMessage {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label(error, systemImage: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.red)
-                                .font(.callout)
+                        todayPrayersSection
+                            .padding(.top, 24)
 
-                            Button {
-                                Task { await viewModel.refresh() }
-                            } label: {
-                                Label("Retry", systemImage: "arrow.clockwise")
-                                    .font(.callout)
-                                    .fontWeight(.medium)
-                            }
+                        if let error = viewModel.errorMessage {
+                            errorView(error)
                         }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel("Error: \(error). Double tap to retry.")
-                    }
-                }
 
-                // Loading state
-                if viewModel.isLoading && viewModel.todayTimes == nil {
-                    Section {
-                        HStack {
-                            Spacer()
-                            ProgressView("Loading prayer times...")
-                                .font(.subheadline)
-                            Spacer()
+                        if viewModel.isLoading && viewModel.todayTimes == nil {
+                            loadingView
                         }
-                        .listRowBackground(Color.clear)
                     }
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 80)
                 }
             }
-            .navigationTitle("Prayer Times")
-            .refreshable {
-                await viewModel.refresh()
-            }
+            .toolbar(.hidden, for: .navigationBar)
+            .preferredColorScheme(.dark)
             .task {
                 viewModel.loadTodayTimes()
-                // Periodic check every 10 min: covers midnight rollover and stale alarms.
-                // Initial scheduling handled at app level (AthanFrameworkApp.task).
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(600))
                     await viewModel.refreshIfNeeded()
@@ -148,175 +76,343 @@ struct PrayerTimesView: View {
                     Task { await viewModel.refreshIfNeeded() }
                 }
             }
+            .refreshable {
+                await viewModel.refresh()
+            }
         }
+    }
+
+    // MARK: - Date Section
+
+    private var dateSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            let now = Date()
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(now.formatted(.dateTime.weekday(.wide)))
+                Text(now.formatted(.dateTime.month(.wide).day()))
+            }
+            .font(.system(size: 48, weight: .light, design: .serif))
+            .foregroundStyle(Color.white.opacity(0.92))
+
+            if !viewModel.hijriDate.isEmpty {
+                Text(viewModel.hijriDate.uppercased())
+                    .font(.system(size: 15, weight: .light))
+                    .foregroundStyle(AthanTheme.accent.opacity(0.6))
+                    .tracking(1.5)
+                    .padding(.top, 4)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Today's Prayers List
+
+    private var todayPrayersSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("TODAY\u{2019}S PRAYERS")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.25))
+                .tracking(2)
+                .padding(.bottom, 16)
+
+            ForEach(Prayer.allCases) { prayer in
+                if prayer != viewModel.nextPrayer {
+                    prayerRow(prayer)
+                }
+            }
+        }
+    }
+
+    private func prayerRow(_ prayer: Prayer) -> some View {
+        let completed = viewModel.isCompleted(prayer)
+        let passed = viewModel.hasPassed(prayer)
+        let dimmed = completed || passed
+
+        return HStack(spacing: 10) {
+            Button {
+                viewModel.toggleCompletion(for: prayer)
+            } label: {
+                Image(systemName: completed ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(completed ? AthanTheme.accent.opacity(0.6) : Color.white.opacity(0.15))
+            }
+            .buttonStyle(.plain)
+            .sensoryFeedback(.success, trigger: completed)
+
+            NavigationLink {
+                PrayerDetailView(prayer: prayer)
+            } label: {
+                HStack {
+                    Text(prayer.displayName)
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(dimmed ? Color.white.opacity(0.15) : Color.white.opacity(0.5))
+                        .strikethrough(completed, color: Color.white.opacity(0.08))
+
+                    Spacer()
+
+                    Text(viewModel.timeString(for: prayer))
+                        .font(.system(size: 16, weight: .light))
+                        .foregroundStyle(dimmed ? Color.white.opacity(0.15) : Color.white.opacity(0.3))
+                        .monospacedDigit()
+                        .strikethrough(completed, color: Color.white.opacity(0.08))
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 14)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.white.opacity(0.03))
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(prayer.displayName), \(viewModel.timeString(for: prayer))\(completed ? ", completed" : passed ? ", passed" : "")")
+    }
+
+    // MARK: - Error & Loading
+
+    private func errorView(_ error: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(error, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .font(.callout)
+            Button {
+                Task { await viewModel.refresh() }
+            } label: {
+                Label("Retry", systemImage: "arrow.clockwise")
+                    .font(.callout)
+                    .foregroundStyle(AthanTheme.accent)
+            }
+        }
+        .padding(.top, 24)
+    }
+
+    private var loadingView: some View {
+        HStack {
+            Spacer()
+            ProgressView()
+                .tint(AthanTheme.accent)
+            Text("Loading prayer times...")
+                .font(.subheadline)
+                .foregroundStyle(Color.white.opacity(0.3))
+            Spacer()
+        }
+        .padding(.top, 24)
+    }
+
+    // MARK: - Ambient Glow Background
+
+    private var ambientGlows: some View {
+        ZStack {
+            RadialGradient(
+                colors: [AthanTheme.accent.opacity(0.05), .clear],
+                center: UnitPoint(x: 0.7, y: 0.2),
+                startRadius: 0,
+                endRadius: 300
+            )
+            RadialGradient(
+                colors: [AthanTheme.accentDeep.opacity(0.03), .clear],
+                center: UnitPoint(x: 0.2, y: 0.8),
+                startRadius: 0,
+                endRadius: 250
+            )
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 }
 
-/// A single prayer time row — clean, native iOS style.
-struct PrayerRow: View {
+// MARK: - Next Prayer Card
+
+private struct NextPrayerCard: View {
     let prayer: Prayer
     let timeString: String
-    let isEnabled: Bool
-    let hasPassed: Bool
-    let isNext: Bool
-    var offsetDescription: String? = nil
-    var isCompleted: Bool = false
-    var onToggleCompletion: (() -> Void)? = nil
-    let onToggle: () -> Void
-
-    @State private var bellAnimating = false
+    let countdown: String?
+    let progress: Double
+    let allPassed: Bool
+    let isCompleted: Bool
+    let onDone: () -> Void
 
     var body: some View {
-        NavigationLink {
-            PrayerDetailView(prayer: prayer)
-        } label: {
-            HStack(spacing: 12) {
-                // Completion circle
-                if let onToggleCompletion {
-                    Button {
-                        onToggleCompletion()
-                    } label: {
-                        Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
-                            .font(.title2)
-                            .foregroundStyle(
-                                isCompleted
-                                    ? Color(hex: AppConstants.Defaults.tintColorHex)
-                                    : Color.secondary.opacity(0.4)
-                            )
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .sensoryFeedback(.success, trigger: isCompleted)
-                    .accessibilityLabel("Mark \(prayer.displayName) as \(isCompleted ? "incomplete" : "complete")")
-                }
-
-                // Prayer icon with per-prayer color
-                Image(systemName: prayer.sfSymbol)
-                    .font(.title3)
-                    .foregroundStyle(
-                        hasPassed
-                            ? Color.secondary.opacity(0.5)
-                            : Color(hex: prayer.colorHex)
-                    )
-                    .frame(width: 28, alignment: .center)
-                    .accessibilityHidden(true)
-
+        VStack(alignment: .leading, spacing: 0) {
+            // Header: label + sun icon
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(prayer.displayName)
-                            .font(.headline)
-                            .foregroundStyle(hasPassed ? .secondary : .primary)
+                    Text(allPassed ? "NEXT PRAYER" : "NEXT PRAYER")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AthanTheme.accent.opacity(0.5))
+                        .tracking(2.5)
 
-                        if isNext {
-                            Text("NEXT")
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color(hex: AppConstants.Defaults.tintColorHex).gradient)
-                                .foregroundStyle(.white)
-                                .clipShape(Capsule())
-                                .accessibilityLabel("next prayer")
-                        }
-                    }
-
-                    Text(timeString)
-                        .font(.title2)
-                        .fontWeight(.medium)
-                        .monospacedDigit()
-                        .foregroundStyle(hasPassed ? .secondary : .primary)
-                        .contentTransition(.numericText())
+                    Text(allPassed ? "Fajr" : prayer.displayName)
+                        .font(.system(size: 36, weight: .regular, design: .serif))
+                        .foregroundStyle(Color.white.opacity(0.95))
                 }
+                Spacer()
+                SunIconView()
+                    .frame(width: 44, height: 44)
+            }
+            .padding(.bottom, 24)
+
+            // Countdown digits
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(countdown ?? "--:--")
+                    .font(.system(size: 72, weight: .light, design: .serif))
+                    .foregroundStyle(Color.white.opacity(0.95))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+
+                Text(allPassed ? "UNTIL FAJR" : "REMAINING")
+                    .font(.system(size: 13, weight: .light))
+                    .foregroundStyle(Color.white.opacity(0.35))
+                    .tracking(1)
+                    .padding(.leading, 4)
+            }
+            .padding(.bottom, 20)
+
+            // Progress bar
+            PrayerProgressBar(progress: progress)
+                .padding(.bottom, 20)
+
+            // Bottom: adhan time + done button
+            HStack {
+                (Text(allPassed ? "Fajr at " : "Adhan at ")
+                    .foregroundStyle(Color.white.opacity(0.4))
+                 + Text(timeString)
+                    .foregroundStyle(Color.white.opacity(0.6)))
+                .font(.system(size: 15))
 
                 Spacer()
 
-                // Alarm toggle + offset
-                VStack(spacing: 2) {
-                    Button {
-                        withAnimation(.bouncy(duration: 0.3)) {
-                            bellAnimating = true
+                if !allPassed {
+                    Button(action: onDone) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("DONE")
+                                .font(.system(size: 13, weight: .medium))
+                                .tracking(1)
                         }
-                        onToggle()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            bellAnimating = false
-                        }
-                    } label: {
-                        Image(systemName: isEnabled ? "bell.fill" : "bell.slash")
-                            .font(.title3)
-                            .foregroundStyle(
-                                isEnabled
-                                    ? Color(hex: AppConstants.Defaults.tintColorHex)
-                                    : Color.secondary.opacity(0.5)
-                            )
-                            .symbolEffect(.bounce, value: bellAnimating)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
+                        .foregroundStyle(AthanTheme.accent.opacity(0.85))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(AthanTheme.accent.opacity(0.1))
+                                .overlay(Capsule().stroke(AthanTheme.accent.opacity(0.12), lineWidth: 1))
+                        )
                     }
                     .buttonStyle(.plain)
-                    .sensoryFeedback(.impact(flexibility: .soft), trigger: isEnabled)
-                    .accessibilityLabel("\(prayer.displayName) alarm")
-                    .accessibilityValue(isEnabled ? "On" : "Off")
-                    .accessibilityHint("Double tap to \(isEnabled ? "disable" : "enable") alarm")
-
-                    if let offset = offsetDescription, isEnabled {
-                        Text(offset)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .accessibilityLabel("Alarm offset: \(offset)")
-                    }
+                    .sensoryFeedback(.success, trigger: isCompleted)
                 }
             }
-            .padding(.vertical, 4)
+        }
+        .padding(28)
+        .background {
+            RoundedRectangle(cornerRadius: 24)
+                .fill(AthanTheme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(AthanTheme.cardBorder, lineWidth: 1)
+                )
+                .overlay(alignment: .top) {
+                    LinearGradient(
+                        colors: [.clear, AthanTheme.cardEdgeHighlight, .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(height: 1)
+                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(prayerAccessibilityLabel)
-    }
-
-    private var prayerAccessibilityLabel: String {
-        var label = "\(prayer.displayName), \(timeString)"
-        if isNext { label += ", next prayer" }
-        if hasPassed { label += ", passed" }
-        label += ", alarm \(isEnabled ? "on" : "off")"
-        return label
+        .accessibilityLabel("Next prayer: \(prayer.displayName), \(countdown ?? "unknown") remaining, adhan at \(timeString)")
     }
 }
 
-/// Informational row showing Sunrise time. No alarm toggle, no navigation.
-struct SunriseRow: View {
-    let timeString: String
-    let hasPassed: Bool
+// MARK: - Sun Icon (glowing orb + horizon)
+
+private struct SunIconView: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [AthanTheme.accent.opacity(0.9), AthanTheme.accentDeep.opacity(0.6)],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: 8
+                    )
+                )
+                .frame(width: 16, height: 16)
+                .shadow(color: AthanTheme.accent.opacity(0.3), radius: 8)
+                .offset(y: -4)
+
+            LinearGradient(
+                colors: [.clear, AthanTheme.accent.opacity(0.5), .clear],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 32, height: 1)
+            .offset(y: 8)
+        }
+    }
+}
+
+// MARK: - Progress Bar
+
+private struct PrayerProgressBar: View {
+    let progress: Double
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Invisible spacer to align with prayer rows' completion circles
-            Color.clear
-                .frame(width: 28, height: 28)
-                .accessibilityHidden(true)
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.white.opacity(0.06))
 
-            Image(systemName: "sunrise.fill")
-                .font(.title3)
-                .foregroundStyle(hasPassed ? Color.secondary.opacity(0.5) : .orange)
-                .frame(width: 28, alignment: .center)
-                .accessibilityHidden(true)
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(
+                        LinearGradient(
+                            colors: [AthanTheme.accent.opacity(0.6), AthanTheme.accentDeep.opacity(0.2)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: max(0, geo.size.width * CGFloat(progress)))
+                    .animation(.easeOut(duration: 0.8), value: progress)
+            }
+        }
+        .frame(height: 2)
+    }
+}
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Sunrise")
-                    .font(.headline)
-                    .foregroundStyle(hasPassed ? .secondary : .primary)
+// MARK: - Geometric Accent Overlay
 
-                Text(timeString)
-                    .font(.title2)
-                    .fontWeight(.medium)
-                    .monospacedDigit()
-                    .foregroundStyle(hasPassed ? .secondary : .primary)
-                    .contentTransition(.numericText())
+private struct GeometricAccentView: View {
+    var body: some View {
+        Canvas { context, size in
+            let center = CGPoint(x: size.width - 20, y: 120)
+            let white = Color.white
+
+            // Concentric circles
+            for (radius, lineWidth) in [(80.0, 0.5), (60.0, 0.3), (40.0, 0.3)] as [(CGFloat, CGFloat)] {
+                let rect = CGRect(
+                    x: center.x - radius, y: center.y - radius,
+                    width: radius * 2, height: radius * 2
+                )
+                context.stroke(Circle().path(in: rect), with: .color(white), lineWidth: lineWidth)
             }
 
-            Spacer()
+            // Diamond shapes (rotated squares)
+            for radius: CGFloat in [80, 60] {
+                var path = Path()
+                path.move(to: CGPoint(x: center.x, y: center.y - radius))
+                path.addLine(to: CGPoint(x: center.x + radius, y: center.y))
+                path.addLine(to: CGPoint(x: center.x, y: center.y + radius))
+                path.addLine(to: CGPoint(x: center.x - radius, y: center.y))
+                path.closeSubpath()
+                context.stroke(path, with: .color(white), lineWidth: 0.3)
+            }
         }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Sunrise, \(timeString)\(hasPassed ? ", passed" : "")")
     }
 }

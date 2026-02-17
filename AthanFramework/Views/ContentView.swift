@@ -34,6 +34,7 @@ struct MainTabView: View {
                 SettingsView()
             }
         }
-        .tint(Color(hex: AppConstants.Defaults.tintColorHex))
+        .tint(AthanTheme.accent)
+        .preferredColorScheme(.dark)
     }
 }

@@ -165,6 +165,10 @@ final class AppCoordinator {
 
             try cloudContext.save()
 
+        } catch is CancellationError {
+            // Ignore task cancellations (e.g. pull-to-refresh interrupted)
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            // Ignore URLSession cancellations (e.g. pull-to-refresh interrupted)
         } catch {
             lastError = error
         }

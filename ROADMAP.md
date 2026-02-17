@@ -38,6 +38,9 @@ A third-party developer who wants their app's tasks to appear in the Calendar an
 
 This two-framework approach replicates the functional behavior of Urgent Reminders — a task visible in Calendar that triggers a real alarm — even though it cannot set the actual "Urgent" flag that Apple's Reminders app uses internally.
 
+### Missed Prayer App Badge
+Set the iOS app icon badge number to the count of prayers that have passed today but haven't been marked as done. Uses `UNUserNotificationCenter.setBadgeCount()` to update the red badge on the app icon. Resets daily.
+
 ## Future Ideas
 
 - Apple Watch companion

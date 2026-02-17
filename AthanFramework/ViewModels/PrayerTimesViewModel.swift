@@ -11,10 +11,13 @@ final class PrayerTimesViewModel {
     private var countdownTimer: Timer?
 
     var todayTimes: DailyPrayerTimes?
+    var tomorrowTimes: DailyPrayerTimes?
     var alarmConfigs: [PrayerAlarmConfig] = []
     var isLoading = false
     var errorMessage: String?
     var countdownToNext: String?
+    var countdownFormatted: String?
+    var progressToNextPrayer: Double = 0
     var completions: [PrayerCompletion] = []
 
     init(coordinator: AppCoordinator, cloudContext: ModelContext) {
@@ -33,6 +36,15 @@ final class PrayerTimesViewModel {
             predicate: #Predicate { $0.date >= startOfDay && $0.date < endOfDay }
         )
         todayTimes = try? cloudContext.fetch(descriptor).first
+
+        // Also load tomorrow's times for Fajr countdown when all today's prayers have passed
+        let startOfTomorrow = endOfDay
+        let endOfTomorrow = calendar.date(byAdding: .day, value: 1, to: startOfTomorrow) ?? startOfTomorrow
+        let tomorrowDescriptor = FetchDescriptor<DailyPrayerTimes>(
+            predicate: #Predicate { $0.date >= startOfTomorrow && $0.date < endOfTomorrow }
+        )
+        tomorrowTimes = try? cloudContext.fetch(tomorrowDescriptor).first
+
         loadAlarmConfigs()
         loadCompletions()
         startCountdownTimer()
@@ -222,40 +234,77 @@ final class PrayerTimesViewModel {
         todayTimes?.hijriDate ?? ""
     }
 
+    /// Tomorrow's Fajr time formatted for display.
+    var tomorrowFajrTimeString: String {
+        guard let fajr = tomorrowTimes?.fajr else { return "--:--" }
+        return DateFormatter.prayerTime.string(from: fajr)
+    }
+
     // MARK: - Countdown Timer
 
     /// Starts a timer that updates the countdown string every second.
     private func startCountdownTimer() {
         countdownTimer?.invalidate()
         updateCountdown()
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateCountdown()
             }
         }
     }
 
-    /// Updates the countdown string to the next prayer.
+    /// Updates the countdown string and progress to the next prayer.
     private func updateCountdown() {
-        guard let next = nextPrayer,
-              let time = todayTimes?.time(for: next) else {
+        // If all today's prayers have passed, count down to tomorrow's Fajr
+        let time: Date
+        if let next = nextPrayer, let t = todayTimes?.time(for: next) {
+            time = t
+        } else if let fajrTime = tomorrowTimes?.fajr {
+            time = fajrTime
+        } else {
             countdownToNext = nil
+            countdownFormatted = nil
+            progressToNextPrayer = 0
             return
         }
 
         let interval = time.timeIntervalSince(Date())
         guard interval > 0 else {
             countdownToNext = nil
+            countdownFormatted = nil
+            progressToNextPrayer = 1
             return
         }
 
-        let hours = Int(interval) / 3600
-        let minutes = (Int(interval) % 3600) / 60
+        let totalSeconds = Int(interval)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
 
+        // Legacy format
         if hours > 0 {
             countdownToNext = "\(hours)h \(minutes)m remaining"
         } else {
             countdownToNext = "\(minutes)m remaining"
         }
+
+        // Compact format for the new UI
+        if hours > 0 {
+            countdownFormatted = String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            countdownFormatted = String(format: "%d:%02d", minutes, seconds)
+        }
+
+        // Progress: fraction of time elapsed between previous prayer and next
+        let prevTime: Date
+        if let prev = Prayer.allCases.last(where: { hasPassed($0) }),
+           let pt = todayTimes?.time(for: prev) {
+            prevTime = pt
+        } else {
+            prevTime = Calendar.current.startOfDay(for: Date())
+        }
+        let totalInterval = time.timeIntervalSince(prevTime)
+        let elapsed = Date().timeIntervalSince(prevTime)
+        progressToNextPrayer = totalInterval > 0 ? min(max(elapsed / totalInterval, 0), 1) : 0
     }
 }

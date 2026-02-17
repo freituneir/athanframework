@@ -198,6 +198,33 @@ final class AlarmSchedulingService {
 
     // MARK: - Schedule
 
+    // MARK: - Stop Past-Due Prayer LAs
+
+    /// Stops Live Activities for prayers whose fire date has passed.
+    /// Called before scheduling a new alarm so only one prayer LA is active at a time.
+    /// Does NOT mark prayers as done — just kills the LA widget.
+    func stopPastDuePrayerAlarms() {
+        let device = deviceID
+        let now = Date.now
+        let prayerNames = Prayer.allCases.map(\.rawValue)
+        let descriptor = FetchDescriptor<DeviceAlarmState>(
+            predicate: #Predicate { $0.deviceID == device && $0.fireDate != nil && $0.fireDate! < now }
+        )
+        guard let pastDue = try? localContext.fetch(descriptor), !pastDue.isEmpty else { return }
+
+        for state in pastDue {
+            // Only stop prayer alarms, not reminder alarms
+            let name = state.prayerName
+            guard prayerNames.contains(name) else { continue }
+            if let alarmID = state.alarmID {
+                DebugLog.shared.log("stopPastDue: stopping \(name) LA (ID=\(alarmID))")
+                try? AlarmManager.shared.stop(id: alarmID)
+            }
+            localContext.delete(state)
+        }
+        try? localContext.save()
+    }
+
     /// Schedules a single AlarmKit alarm for a prayer.
     /// Uses Schedule.fixed() so the alarm fires at the exact prayer time,
     /// plus CountdownDuration with a 5-minute preAlert and 24-hour postAlert
@@ -209,6 +236,9 @@ final class AlarmSchedulingService {
         nextPrayer: Prayer? = nil,
         nextPrayerTime: Date? = nil
     ) async throws {
+        // Kill any lingering post-alert LAs from previous prayers
+        stopPastDuePrayerAlarms()
+
         // DEBUG: verbose schedule logging
         DebugLog.shared.log("scheduleAlarm: \(prayer.displayName) at \(time), auth=\(isAuthorized)")
         let alarmID = UUID()
@@ -230,10 +260,19 @@ final class AlarmSchedulingService {
         )
 
         let tintColor = Color(hex: config.tintColorHex)
+        // Format next prayer time for Live Activity display
+        let nextPrayerTimeStr: String
+        if let nextTime = nextPrayerTime {
+            nextPrayerTimeStr = DateFormatter.prayerTime.string(from: nextTime)
+        } else {
+            nextPrayerTimeStr = ""
+        }
+
         let metadata = PrayerAlarmMetadata(
             prayer: prayer,
             fireDate: time,
             nextPrayer: nextPrayer,
+            nextPrayerTimeString: nextPrayerTimeStr,
             snoozeDurationSeconds: config.snoozeDurationSeconds
         )
 

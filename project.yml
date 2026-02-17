@@ -66,6 +66,8 @@ targets:
       - path: AthanFramework/Models/CalculationTypes.swift
       - path: AthanFramework/Utilities/Constants.swift
       - path: AthanFramework/Utilities/Color+Hex.swift
+      - path: AthanFramework/Utilities/Theme.swift
+      - path: AthanFramework/Utilities/DateFormatter+Prayer.swift
       - path: AthanFramework/Intents/AlarmControlIntents.swift
     settings:
       base:
