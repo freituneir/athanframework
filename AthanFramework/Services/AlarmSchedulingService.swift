@@ -87,7 +87,9 @@ final class AlarmSchedulingService {
             for alarm in remoteAlarms {
                 DebugLog.shared.log("  alarm \(alarm.id)")
             }
-            Task { await updateAlarmState(with: remoteAlarms) }
+            // Update synchronously — avoids race where reconcileAlarms() reads
+            // stale activeAlarmIDs before an unstructured Task can execute.
+            updateAlarmState(with: remoteAlarms)
         } catch {
             DebugLog.shared.error("fetchAlarms: AlarmKit.alarms threw: \(error)")
         }
@@ -191,6 +193,7 @@ final class AlarmSchedulingService {
             try await scheduleAlarm(
                 for: prayer,
                 at: scheduledTime,
+                rawPrayerTime: baseTime,
                 config: config,
                 nextPrayer: nextPrayer,
                 nextPrayerTime: nextPrayerTime,
@@ -203,29 +206,40 @@ final class AlarmSchedulingService {
 
     // MARK: - Stop Past-Due Prayer LAs
 
-    /// Stops Live Activities for prayers whose fire date has passed.
-    /// Called before scheduling a new alarm so only one prayer LA is active at a time.
-    /// Does NOT mark prayers as done — just kills the LA widget.
-    func stopPastDuePrayerAlarms() {
+    /// Stops ALL existing prayer + followup + reminder alarm Live Activities.
+    /// Used by the debug "Stop All" feature. Does NOT mark prayers as done.
+    func stopAllPrayerAlarms() {
         let device = deviceID
-        let now = Date.now
-        let prayerNames = Prayer.allCases.map(\.rawValue)
-        let descriptor = FetchDescriptor<DeviceAlarmState>(
-            predicate: #Predicate { $0.deviceID == device && $0.fireDate != nil && $0.fireDate! < now }
-        )
-        guard let pastDue = try? localContext.fetch(descriptor), !pastDue.isEmpty else { return }
+        let prayerNames = Set(Prayer.allCases.map(\.rawValue))
+        let followupNames = Set(Prayer.allCases.map { "followup-\($0.rawValue)" })
+        let reminderNames = Set(Prayer.allCases.map { "reminder-\($0.rawValue)" })
+        let targetNames = prayerNames.union(followupNames).union(reminderNames)
 
-        for state in pastDue {
-            // Only stop prayer alarms, not reminder alarms
+        let descriptor = FetchDescriptor<DeviceAlarmState>(
+            predicate: #Predicate { $0.deviceID == device }
+        )
+        guard let allStates = try? localContext.fetch(descriptor), !allStates.isEmpty else { return }
+
+        for state in allStates {
             let name = state.prayerName
-            guard prayerNames.contains(name) else { continue }
+            guard targetNames.contains(name) else { continue }
             if let alarmID = state.alarmID {
-                DebugLog.shared.log("stopPastDue: stopping \(name) LA (ID=\(alarmID))")
+                DebugLog.shared.log("stopAllPrayer: stopping \(name) LA (ID=\(alarmID))")
                 try? AlarmManager.shared.stop(id: alarmID)
             }
             localContext.delete(state)
         }
         try? localContext.save()
+
+        // Clean up App Group keys for followups, reminders, and fired alarms
+        if let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) {
+            for prayer in Prayer.allCases {
+                suite.removeObject(forKey: AppConstants.AppGroup.followupAlarmIDKey(for: prayer.rawValue))
+                suite.removeObject(forKey: AppConstants.AppGroup.reminderAlarmIDKey(for: prayer.rawValue))
+                suite.removeObject(forKey: AppConstants.AppGroup.reminderFireDateKey(for: prayer.rawValue))
+            }
+            suite.removeObject(forKey: AppConstants.AppGroup.firedAlarmsKey)
+        }
     }
 
     /// Schedules a single AlarmKit alarm for a prayer.
@@ -235,13 +249,15 @@ final class AlarmSchedulingService {
     func scheduleAlarm(
         for prayer: Prayer,
         at time: Date,
+        rawPrayerTime: Date? = nil,
         config: PrayerAlarmConfig,
         nextPrayer: Prayer? = nil,
         nextPrayerTime: Date? = nil,
         athanSound: AthanSound = .defaultTone
     ) async throws {
-        // Kill any lingering post-alert LAs from previous prayers
-        stopPastDuePrayerAlarms()
+        // NOTE: We no longer call stopAllPrayerAlarms() here.
+        // reconcileAlarms() handles per-prayer cleanup via cancelAlarm(for:) before calling this.
+        // Followup LAs (for uncompleted prayers) use a separate namespace and must survive.
 
         // DEBUG: verbose schedule logging
         DebugLog.shared.log("scheduleAlarm: \(prayer.displayName) at \(time), auth=\(isAuthorized)")
@@ -283,6 +299,7 @@ final class AlarmSchedulingService {
         let metadata = PrayerAlarmMetadata(
             prayer: prayer,
             fireDate: time,
+            rawPrayerTime: rawPrayerTime,
             nextPrayer: nextPrayer,
             nextPrayerTimeString: nextPrayerTimeStr,
             snoozeDurationSeconds: config.snoozeDurationSeconds,
@@ -328,36 +345,401 @@ final class AlarmSchedulingService {
         }
 
         persistAlarmID(alarmID, for: prayer, fireDate: time)
+        writeLastFiredAlarm(prayer: prayer, fireDate: time)
+    }
+
+    // MARK: - Proactive Reminder Alarm
+
+    /// Reads the reminder delay (minutes) from App Group UserDefaults.
+    func readReminderDelay() -> Int {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return 5 }
+        let value = suite.integer(forKey: AppConstants.AppGroup.reminderDelayKey)
+        return value > 0 ? value : 5
+    }
+
+    /// Schedules a silent reminder alarm that shows "Pray Now" LA if the prayer isn't done.
+    /// Similar to scheduleRecoveryAlarm() but scheduled proactively at alarm creation time.
+    func scheduleReminderAlarm(
+        for prayer: Prayer,
+        at reminderTime: Date,
+        prayerFireDate: Date,
+        config: PrayerAlarmConfig,
+        nextPrayer: Prayer? = nil,
+        nextPrayerTime: Date? = nil
+    ) async throws {
+        // Cancel any existing reminder for this prayer
+        try await cancelReminderAlarm(for: prayer)
+
+        let alarmID = UUID()
+        let stateKey = "reminder-\(prayer.rawValue)"
+
+        let alertPresentation = AlarmPresentation.Alert(
+            title: LocalizedStringResource(stringLiteral: "\(prayer.displayName) Prayer"),
+            stopButton: .prayerDismissButton,
+            secondaryButton: .prayerSnoozeButton,
+            secondaryButtonBehavior: .countdown
+        )
+
+        let countdownPresentation = AlarmPresentation.Countdown(
+            title: LocalizedStringResource(stringLiteral: "\(prayer.displayName) Prayer")
+        )
+
+        let presentation = AlarmPresentation(
+            alert: alertPresentation,
+            countdown: countdownPresentation
+        )
+
+        let tintColor = Color(hex: config.tintColorHex)
+
+        // Format next prayer time
+        let nextPrayerTimeStr: String
+        if let nextTime = nextPrayerTime {
+            nextPrayerTimeStr = DateFormatter.prayerTime.string(from: nextTime)
+        } else {
+            nextPrayerTimeStr = ""
+        }
+
+        // fireDate = original prayer time (past at reminder time) → shows "Pray Now" + count-up
+        let metadata = PrayerAlarmMetadata(
+            prayer: prayer,
+            fireDate: prayerFireDate,
+            nextPrayer: nextPrayer,
+            nextPrayerTimeString: nextPrayerTimeStr,
+            snoozeDurationSeconds: config.snoozeDurationSeconds,
+            preAlertSeconds: 4 * 3600
+        )
+
+        let attributes = AlarmAttributes(
+            presentation: presentation,
+            metadata: metadata,
+            tintColor: tintColor
+        )
+
+        // Use a long preAlert so the alarm stays in countdown mode — no system alert fires.
+        // The LA appears silently; the widget renders post-alert UI because fireDate is in the past.
+        let preAlertSeconds: TimeInterval = 4 * 3600
+        let postAlertSeconds = TimeInterval(config.snoozeDurationSeconds)
+
+        let schedule = Alarm.Schedule.fixed(reminderTime)
+
+        let countdownDuration = Alarm.CountdownDuration(
+            preAlert: preAlertSeconds,
+            postAlert: postAlertSeconds
+        )
+
+        let stopIntent = DismissPrayerIntent(alarmID: alarmID.uuidString, entityName: prayer.rawValue)
+        let secondaryIntent = SnoozePrayerIntent(alarmID: alarmID.uuidString, entityName: prayer.rawValue)
+
+        // No sound — silent reminder
+        let configuration = AlarmManager.AlarmConfiguration(
+            countdownDuration: countdownDuration,
+            schedule: schedule,
+            attributes: attributes,
+            stopIntent: stopIntent,
+            secondaryIntent: secondaryIntent
+        )
+
+        do {
+            _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: configuration)
+            DebugLog.shared.log("reminderAlarm: SUCCESS \(prayer.displayName) at \(reminderTime), ID=\(alarmID)")
+        } catch {
+            DebugLog.shared.error("reminderAlarm: FAILED \(prayer.displayName): \(error)")
+            throw error
+        }
+
+        // Persist locally for cleanup
+        persistAlarmID(alarmID, forKey: stateKey, fireDate: reminderTime)
+
+        // Write to App Group so intents (MarkDone, Snooze) can cancel/reschedule
+        writeReminderToAppGroup(prayer: prayer, alarmID: alarmID, prayerFireDate: prayerFireDate)
+    }
+
+    /// Cancels the reminder alarm for a prayer, if one exists.
+    /// Checks both SwiftData and App Group (intent may have rescheduled with a different ID).
+    func cancelReminderAlarm(for prayer: Prayer) async throws {
+        let stateKey = "reminder-\(prayer.rawValue)"
+        let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName)
+
+        // Cancel from SwiftData state
+        if let state = fetchAlarmState(forKey: stateKey), let alarmID = state.alarmID {
+            try? AlarmManager.shared.cancel(id: alarmID)
+            try? AlarmManager.shared.stop(id: alarmID)
+            localContext.delete(state)
+            try? localContext.save()
+            DebugLog.shared.log("cancelReminder: cancelled SwiftData alarm for \(prayer.displayName)")
+        }
+
+        // Also cancel from App Group (SnoozePrayerIntent may have rescheduled with a new ID)
+        if let reminderIDStr = suite?.string(forKey: AppConstants.AppGroup.reminderAlarmIDKey(for: prayer.rawValue)),
+           let reminderUUID = UUID(uuidString: reminderIDStr) {
+            try? AlarmManager.shared.cancel(id: reminderUUID)
+            try? AlarmManager.shared.stop(id: reminderUUID)
+            DebugLog.shared.log("cancelReminder: cancelled App Group alarm for \(prayer.displayName)")
+        }
+
+        // Clean up App Group
+        suite?.removeObject(forKey: AppConstants.AppGroup.reminderAlarmIDKey(for: prayer.rawValue))
+        suite?.removeObject(forKey: AppConstants.AppGroup.reminderFireDateKey(for: prayer.rawValue))
+    }
+
+    /// Writes reminder alarm metadata to App Group so intents can manage push-back.
+    private func writeReminderToAppGroup(prayer: Prayer, alarmID: UUID, prayerFireDate: Date) {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+        suite.set(alarmID.uuidString, forKey: AppConstants.AppGroup.reminderAlarmIDKey(for: prayer.rawValue))
+        suite.set(prayerFireDate.timeIntervalSince1970, forKey: AppConstants.AppGroup.reminderFireDateKey(for: prayer.rawValue))
+    }
+
+    // MARK: - Recovery Alarm (Silent LA)
+
+    /// Schedules a silent Live Activity that shows "Pray Now" + Done for a missed prayer.
+    /// Uses a long preAlert (4h) so the alarm stays in countdown mode — no system alert fires.
+    /// The widget shows post-alert UI because `metadata.fireDate` is in the past.
+    func scheduleRecoveryAlarm(
+        for prayer: Prayer,
+        originalFireDate: Date,
+        config: PrayerAlarmConfig,
+        nextPrayer: Prayer?,
+        nextPrayerTime: Date?,
+        athanSound: AthanSound
+    ) async throws {
+        let alarmID = UUID()
+
+        let alertPresentation = AlarmPresentation.Alert(
+            title: LocalizedStringResource(stringLiteral: "\(prayer.displayName) Prayer"),
+            stopButton: .prayerDismissButton,
+            secondaryButton: .prayerSnoozeButton,
+            secondaryButtonBehavior: .countdown
+        )
+
+        let countdownPresentation = AlarmPresentation.Countdown(
+            title: LocalizedStringResource(stringLiteral: "\(prayer.displayName) Prayer")
+        )
+
+        let presentation = AlarmPresentation(
+            alert: alertPresentation,
+            countdown: countdownPresentation
+        )
+
+        let tintColor = Color(hex: config.tintColorHex)
+
+        // Format next prayer time for Live Activity display
+        let nextPrayerTimeStr: String
+        if let nextTime = nextPrayerTime {
+            nextPrayerTimeStr = DateFormatter.prayerTime.string(from: nextTime)
+        } else {
+            nextPrayerTimeStr = ""
+        }
+
+        // fireDate = originalFireDate (past) → isPostAlert() returns true → "Pray Now" + Done
+        let metadata = PrayerAlarmMetadata(
+            prayer: prayer,
+            fireDate: originalFireDate,
+            nextPrayer: nextPrayer,
+            nextPrayerTimeString: nextPrayerTimeStr,
+            snoozeDurationSeconds: config.snoozeDurationSeconds,
+            preAlertSeconds: 4 * 3600
+        )
+
+        let attributes = AlarmAttributes(
+            presentation: presentation,
+            metadata: metadata,
+            tintColor: tintColor
+        )
+
+        // preAlert = 4 hours — alarm stays in countdown mode, no system alert
+        let preAlertSeconds: TimeInterval = 4 * 3600
+        let postAlertSeconds = TimeInterval(config.snoozeDurationSeconds)
+
+        // Schedule immediately — countdown starts now, LA appears
+        let schedule = Alarm.Schedule.fixed(Date.now)
+
+        let countdownDuration = Alarm.CountdownDuration(
+            preAlert: preAlertSeconds,
+            postAlert: postAlertSeconds
+        )
+
+        let stopIntent = DismissPrayerIntent(alarmID: alarmID.uuidString, entityName: prayer.rawValue)
+        let secondaryIntent = SnoozePrayerIntent(alarmID: alarmID.uuidString, entityName: prayer.rawValue)
+
+        // No sound parameter — silent recovery
+        let configuration = AlarmManager.AlarmConfiguration(
+            countdownDuration: countdownDuration,
+            schedule: schedule,
+            attributes: attributes,
+            stopIntent: stopIntent,
+            secondaryIntent: secondaryIntent
+        )
+
+        do {
+            _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: configuration)
+            DebugLog.shared.log("recoveryAlarm: SUCCESS \(prayer.displayName) ID=\(alarmID)")
+        } catch {
+            DebugLog.shared.error("recoveryAlarm: FAILED \(prayer.displayName): \(error)")
+            throw error
+        }
+
+        // Persist under followup namespace so it survives per-prayer cancelAlarm() calls
+        let followupKey = "followup-\(prayer.rawValue)"
+        persistAlarmID(alarmID, forKey: followupKey, fireDate: Date.now.addingTimeInterval(4 * 3600))
+        writeFollowupToAppGroup(prayer: prayer, alarmID: alarmID)
+        DebugLog.shared.log("recoveryAlarm: persisted as \(followupKey), wrote to App Group")
+        // Do NOT call writeLastFiredAlarm() — avoid overwriting tracking data
+    }
+
+    // MARK: - Followup Alarm Helpers
+
+    /// Writes the followup alarm ID to App Group so MarkDoneIntent (widget extension) can cancel it.
+    private func writeFollowupToAppGroup(prayer: Prayer, alarmID: UUID) {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+        suite.set(alarmID.uuidString, forKey: AppConstants.AppGroup.followupAlarmIDKey(for: prayer.rawValue))
+        DebugLog.shared.log("followup: wrote \(prayer.displayName) ID=\(alarmID) to App Group")
+    }
+
+    /// Cancels the followup (recovery) alarm for a prayer, if one exists.
+    func cancelFollowupAlarm(for prayer: Prayer) {
+        let followupKey = "followup-\(prayer.rawValue)"
+        if let state = fetchAlarmState(forKey: followupKey), let alarmID = state.alarmID {
+            DebugLog.shared.log("cancelFollowup: stopping \(prayer.displayName) ID=\(alarmID)")
+            try? AlarmManager.shared.cancel(id: alarmID)
+            try? AlarmManager.shared.stop(id: alarmID)
+            localContext.delete(state)
+            try? localContext.save()
+        }
+        // Also clean up App Group
+        if let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) {
+            suite.removeObject(forKey: AppConstants.AppGroup.followupAlarmIDKey(for: prayer.rawValue))
+        }
+    }
+
+    /// Whether a followup alarm is active for this prayer.
+    func hasActiveFollowup(for prayer: Prayer) -> Bool {
+        let followupKey = "followup-\(prayer.rawValue)"
+        guard let existingID = fetchAlarmState(forKey: followupKey)?.alarmID else { return false }
+        return activeAlarmIDs.contains(existingID)
+    }
+
+    // MARK: - Fired Alarm Tracking (App Group)
+
+    /// Writes a per-prayer fired alarm entry to App Group so recovery can work for any prayer,
+    /// not just the last scheduled one. Key: "firedAlarms" -> [String: Double] (prayer -> timestamp).
+    private func writeLastFiredAlarm(prayer: Prayer, fireDate: Date) {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+        var firedAlarms = suite.dictionary(forKey: AppConstants.AppGroup.firedAlarmsKey) as? [String: Double] ?? [:]
+        firedAlarms[prayer.rawValue] = fireDate.timeIntervalSince1970
+        suite.set(firedAlarms, forKey: AppConstants.AppGroup.firedAlarmsKey)
+        DebugLog.shared.log("firedAlarms: wrote \(prayer.displayName) at \(fireDate)")
+    }
+
+    // MARK: - Standalone "Pray Now" Live Activity (ActivityKit, no AlarmKit)
+
+    /// Schedules a standalone "Pray Now" Live Activity for a prayer.
+    /// Uses plain ActivityKit — completely independent of AlarmKit alarms.
+    /// The LA appears at `prayerTime` and persists until Done is tapped.
+    func schedulePrayNowActivity(for prayer: Prayer, rawPrayerTime: Date) {
+        // Don't schedule if prayer time is from a previous day
+        let todayStart = Calendar.current.startOfDay(for: Date.now)
+        guard rawPrayerTime >= todayStart else {
+            DebugLog.shared.log("prayNow: \(prayer.displayName) is from a previous day, skipping")
+            return
+        }
+
+        // Don't schedule if one already exists for this prayer
+        for activity in Activity<PrayNowAttributes>.activities {
+            if activity.attributes.prayerName == prayer.rawValue {
+                DebugLog.shared.log("prayNow: \(prayer.displayName) already has active LA, skipping")
+                return
+            }
+        }
+
+        let attributes = PrayNowAttributes(
+            prayerName: prayer.rawValue,
+            rawPrayerTime: rawPrayerTime
+        )
+        let initialState = PrayNowAttributes.ContentState(isActive: true)
+        let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: todayStart) ?? Date.now.addingTimeInterval(24 * 3600)
+        let content = ActivityContent(state: initialState, staleDate: endOfDay)
+
+        do {
+            _ = try Activity.request(
+                attributes: attributes,
+                content: content,
+                pushType: nil
+            )
+            DebugLog.shared.log("prayNow: scheduled \(prayer.displayName) LA, rawTime=\(rawPrayerTime)")
+        } catch {
+            DebugLog.shared.error("prayNow: failed to schedule \(prayer.displayName): \(error)")
+        }
+    }
+
+    /// Ends the "Pray Now" Live Activity for a prayer (called when marking done).
+    func endPrayNowActivity(for prayer: Prayer) {
+        for activity in Activity<PrayNowAttributes>.activities {
+            if activity.attributes.prayerName == prayer.rawValue {
+                let finalState = PrayNowAttributes.ContentState(isActive: false)
+                Task {
+                    await activity.end(ActivityContent(state: finalState, staleDate: nil), dismissalPolicy: .immediate)
+                }
+                DebugLog.shared.log("prayNow: ended \(prayer.displayName) LA")
+            }
+        }
+    }
+
+    /// Ends all "Pray Now" Live Activities (for debug "Stop All").
+    func endAllPrayNowActivities() {
+        for activity in Activity<PrayNowAttributes>.activities {
+            let finalState = PrayNowAttributes.ContentState(isActive: false)
+            Task {
+                await activity.end(ActivityContent(state: finalState, staleDate: nil), dismissalPolicy: .immediate)
+            }
+        }
+        DebugLog.shared.log("prayNow: ended all Pray Now LAs")
+    }
+
+    /// Reconciles "Pray Now" LAs: schedule for past uncompleted prayers, end for completed ones.
+    /// Appears when the RAW prayer time has passed (ignores user offset).
+    /// Offset only affects when the AlarmKit alarm fires — not the count-up LA.
+    func reconcilePrayNowActivities(prayerTimes: DailyPrayerTimes, completedPrayers: Set<String>) {
+        for prayer in Prayer.allCases {
+            guard let baseTime = prayerTimes.time(for: prayer) else { continue }
+
+            if completedPrayers.contains(prayer.rawValue) {
+                endPrayNowActivity(for: prayer)
+            } else if baseTime <= Date.now {
+                schedulePrayNowActivity(for: prayer, rawPrayerTime: baseTime)
+            }
+        }
     }
 
     // MARK: - Test Alarm (Verification)
 
-    /// Test F: Full config with corrected schedule offset + native snooze.
-    /// Expected: countdown LA at +1 min, counts down 2 min, alarm fires at +3 min.
-    /// Snooze: tapping "Snooze" restarts countdown for 60s, then alarm re-fires.
-    /// Same LA persists through snooze — no new widget/notification created.
+    /// Test alarm: countdown LA appears at +30s, alarm fires at +90s.
+    /// Snooze: 30s. Uses "fajr" entity so Dismiss/Snooze/Done intents work.
+    /// Also schedules a standalone "Pray Now" LA at fire time.
     func scheduleTestAlarmCorrected(index: Int, athanSound: AthanSound = .defaultTone) async throws -> Date {
-        let fireTime = Date.now.addingTimeInterval(3 * 60)
+        let fireTime = Date.now.addingTimeInterval(90)
         let alarmID = UUID()
-        let preAlertSeconds: TimeInterval = 2 * 60
-        let snoozeSeconds: TimeInterval = 60 // short for testing
+        let preAlertSeconds: TimeInterval = 60
+        let snoozeSeconds: TimeInterval = 30
 
         let alertPresentation = AlarmPresentation.Alert(
-            title: "Test F-\(index)",
+            title: "Test-\(index): Fajr",
             stopButton: .prayerDismissButton,
             secondaryButton: .prayerSnoozeButton,
             secondaryButtonBehavior: .countdown
         )
         let countdownPresentation = AlarmPresentation.Countdown(
-            title: "Test F-\(index)"
+            title: "Test-\(index): Fajr"
         )
         let presentation = AlarmPresentation(
             alert: alertPresentation,
             countdown: countdownPresentation
         )
+        // rawPrayerTime = fireTime so the count-up LA starts counting from fire time
+        let rawPrayerTime = fireTime
         let metadata = PrayerAlarmMetadata(
             prayer: .fajr,
             fireDate: fireTime,
+            rawPrayerTime: rawPrayerTime,
             nextPrayer: .dhuhr,
             snoozeDurationSeconds: Int(snoozeSeconds),
             preAlertSeconds: preAlertSeconds
@@ -368,10 +750,7 @@ final class AlarmSchedulingService {
             tintColor: Color.accentColor
         )
 
-        // Offset: schedule starts countdown at fireTime - preAlert,
-        // alarm fires preAlert seconds later = fireTime
         let schedule = Alarm.Schedule.fixed(fireTime.addingTimeInterval(-preAlertSeconds))
-
         let countdownDuration = Alarm.CountdownDuration(
             preAlert: preAlertSeconds,
             postAlert: snoozeSeconds
@@ -390,9 +769,20 @@ final class AlarmSchedulingService {
         )
 
         _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: configuration)
-        let scheduleStart = fireTime.addingTimeInterval(-preAlertSeconds)
-        DebugLog.shared.log("TestF: scheduled ID=\(alarmID), countdown at \(scheduleStart), alarm at \(fireTime), preAlert=\(Int(preAlertSeconds))s, snooze=\(Int(snoozeSeconds))s")
+        DebugLog.shared.log("Test: scheduled ID=\(alarmID), countdown at \(fireTime.addingTimeInterval(-preAlertSeconds)), alarm at \(fireTime), snooze=\(Int(snoozeSeconds))s")
         persistAlarmID(alarmID, forKey: "test-\(index)", fireDate: fireTime)
+        writeLastFiredAlarm(prayer: .fajr, fireDate: fireTime)
+
+        // Schedule the standalone "Pray Now" LA at fire time
+        // Uses a delayed Task so it appears when the alarm fires, not immediately
+        Task {
+            let delay = fireTime.timeIntervalSince(.now)
+            if delay > 0 {
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            schedulePrayNowActivity(for: .fajr, rawPrayerTime: fireTime)
+        }
+
         return fireTime
     }
 
@@ -471,6 +861,10 @@ final class AlarmSchedulingService {
         }
 
         activeAlarmIDs.removeAll()
+
+        // Also end all standalone "Pray Now" ActivityKit LAs
+        endAllPrayNowActivities()
+
         DebugLog.shared.log("stopAllAlarms: done, stopped \(count) alarm(s)")
         return count
     }

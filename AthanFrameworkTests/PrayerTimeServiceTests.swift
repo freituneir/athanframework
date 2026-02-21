@@ -190,6 +190,7 @@ func makeMockSession() -> URLSession {
 
 // MARK: - PrayerTimeService Tests
 
+@MainActor
 struct PrayerTimeServiceFetchTests {
 
     @Test("fetchMonth returns parsed prayer times for each day in the response")
@@ -352,6 +353,7 @@ struct PrayerTimeServiceFetchTests {
     }
 }
 
+@MainActor
 struct PrayerTimeServiceErrorTests {
 
     @Test("fetchMonth throws on HTTP error status code")
@@ -364,7 +366,7 @@ struct PrayerTimeServiceErrorTests {
         let service = PrayerTimeService(modelContext: context, session: makeMockSession())
 
         await #expect(throws: PrayerTimeServiceError.self) {
-            try await service.fetchMonth(
+            _ = try await service.fetchMonth(
                 year: 2026, month: 2,
                 latitude: 40.7128, longitude: -74.006,
                 method: .isna, school: .shafi,
@@ -385,7 +387,7 @@ struct PrayerTimeServiceErrorTests {
         let service = PrayerTimeService(modelContext: context, session: makeMockSession())
 
         await #expect(throws: PrayerTimeServiceError.self) {
-            try await service.fetchMonth(
+            _ = try await service.fetchMonth(
                 year: 2026, month: 2,
                 latitude: 40.7128, longitude: -74.006,
                 method: .isna, school: .shafi,
@@ -405,7 +407,7 @@ struct PrayerTimeServiceErrorTests {
         let service = PrayerTimeService(modelContext: context, session: makeMockSession())
 
         await #expect(throws: (any Error).self) {
-            try await service.fetchMonth(
+            _ = try await service.fetchMonth(
                 year: 2026, month: 2,
                 latitude: 40.7128, longitude: -74.006,
                 method: .isna, school: .shafi,
@@ -426,7 +428,7 @@ struct PrayerTimeServiceErrorTests {
         let service = PrayerTimeService(modelContext: context, session: makeMockSession())
 
         await #expect(throws: (any Error).self) {
-            try await service.fetchMonth(
+            _ = try await service.fetchMonth(
                 year: 2026, month: 2,
                 latitude: 40.7128, longitude: -74.006,
                 method: .isna, school: .shafi,
@@ -436,6 +438,7 @@ struct PrayerTimeServiceErrorTests {
     }
 }
 
+@MainActor
 struct PrayerTimeServiceCacheTests {
 
     @Test("getCachedTimes returns nil when no data is cached")
@@ -497,6 +500,7 @@ struct PrayerTimeServiceCacheTests {
     }
 }
 
+@MainActor
 struct PrayerTimeServiceCalculationMethodTests {
 
     @Test("All CalculationMethod cases can be used in a fetch request")

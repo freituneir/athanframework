@@ -94,6 +94,13 @@ final class AppCoordinator {
                     athanSound: preferences.selectedAthanSound
                 )
 
+                // Reconcile standalone "Pray Now" LAs — independent of AlarmKit
+                let completedPrayers = readCompletedPrayers()
+                alarmService.reconcilePrayNowActivities(
+                    prayerTimes: todayTimes,
+                    completedPrayers: completedPrayers
+                )
+
                 // 5. Sync to calendar if enabled and access is granted — 30 days ahead
                 let hasCalendarAccess: Bool
                 if preferences.calendarSyncEnabled, calendarService.hasAccess {
@@ -122,55 +129,18 @@ final class AppCoordinator {
                 }
             }
 
-            // 6. Update app badge, home screen widget, and theme
+            // 6. Update app badge, home screen widget, theme, and reminder delay
             let cachedTodayForBadge = prayerTimeService.getCachedTimes(for: today)
             BadgeService.updateBadge(cloudContext: cloudContext, todayTimes: cachedTodayForBadge)
             writePrayerDataToAppGroup(todayTimes: cachedTodayForBadge)
             writeThemeToAppGroup(preferences.selectedTheme)
+            writeReminderDelayToAppGroup(preferences.reminderDelayMinutes)
 
             // 7. Schedule tomorrow's Fajr for overnight coverage.
-            //    Only schedule if today's Fajr has already passed (avoid double-scheduling).
-            //    Respects usesSunriseOffset: if enabled, alarm is relative to tomorrow's sunrise.
-            //    Protects active Fajr alarm — don't cancel if AlarmKit still knows about it.
-            let cachedToday = prayerTimeService.getCachedTimes(for: today)
-            let todayFajrPassed = cachedToday?.fajr.map { $0 < Date() } ?? true
-
-            // Check if Fajr already has an active alarm in AlarmKit
-            let fajrAlreadyActive: Bool
-            if let existingID = alarmService.fetchAlarmState(for: .fajr)?.alarmID,
-               alarmService.activeAlarmIDs.contains(existingID) {
-                fajrAlreadyActive = true
-            } else {
-                fajrAlreadyActive = false
-            }
-
-            if todayFajrPassed, !fajrAlreadyActive,
-               let tomorrowTimesForFajr = tomorrowTimes,
-               let fajrConfig = try getOrCreateAlarmConfigs().first(where: { $0.prayerName == Prayer.fajr.rawValue }),
-               fajrConfig.isEnabled,
-               let fajrTime = tomorrowTimesForFajr.fajr {
-
-                // Use sunrise as reference if the user enabled "Relative to Sunrise"
-                let referenceTime: Date
-                if fajrConfig.usesSunriseOffset, let sunrise = tomorrowTimesForFajr.sunrise {
-                    referenceTime = sunrise
-                } else {
-                    referenceTime = fajrTime
-                }
-
-                let scheduledTime = referenceTime.addingTimeInterval(TimeInterval(fajrConfig.offsetMinutes * 60))
-
-                if scheduledTime > Date() {
-                    try await alarmService.scheduleAlarm(
-                        for: .fajr,
-                        at: scheduledTime,
-                        config: fajrConfig,
-                        nextPrayer: .dhuhr,
-                        nextPrayerTime: tomorrowTimesForFajr.dhuhr,
-                        athanSound: preferences.selectedAthanSound
-                    )
-                }
-            }
+            try await scheduleTomorrowFajrIfNeeded(
+                todayTimes: cachedTodayForBadge,
+                tomorrowTimes: tomorrowTimes
+            )
 
             try cloudContext.save()
 
@@ -220,9 +190,97 @@ final class AppCoordinator {
                 tomorrowFajrTime: tomorrowTimes?.fajr,
                 athanSound: preferences.selectedAthanSound
             )
+
+            // Reconcile standalone "Pray Now" LAs
+            let completedPrayers = readCompletedPrayers()
+            alarmService.reconcilePrayNowActivities(
+                prayerTimes: todayTimes,
+                completedPrayers: completedPrayers
+            )
+
+            // Schedule tomorrow's Fajr if today's has passed — ensures overnight coverage
+            // even when refreshAll() ran before Fajr earlier in the day.
+            try await scheduleTomorrowFajrIfNeeded(
+                todayTimes: todayTimes,
+                tomorrowTimes: tomorrowTimes
+            )
         } catch {
             print("[AppCoordinator] reconcileAlarmsFromCache failed: \(error)")
         }
+    }
+
+    // MARK: - Tomorrow's Fajr (Overnight Coverage)
+
+    /// Schedules tomorrow's Fajr alarm if today's Fajr has already passed.
+    /// Called from both refreshAll() and reconcileAlarmsFromCache() so that
+    /// tomorrow's Fajr is always scheduled once today's passes — even if
+    /// refreshAll() ran before Fajr earlier in the day.
+    private func scheduleTomorrowFajrIfNeeded(
+        todayTimes: DailyPrayerTimes?,
+        tomorrowTimes: DailyPrayerTimes?
+    ) async throws {
+        let todayFajrPassed = todayTimes?.fajr.map { $0 < Date() } ?? true
+
+        // Don't schedule if Fajr already has an active alarm in AlarmKit
+        if let existingID = alarmService.fetchAlarmState(for: .fajr)?.alarmID,
+           alarmService.activeAlarmIDs.contains(existingID) {
+            return
+        }
+
+        guard todayFajrPassed,
+              let tomorrowTimesForFajr = tomorrowTimes,
+              let fajrConfig = try getOrCreateAlarmConfigs().first(where: { $0.prayerName == Prayer.fajr.rawValue }),
+              fajrConfig.isEnabled,
+              let fajrTime = tomorrowTimesForFajr.fajr else {
+            return
+        }
+
+        // Use sunrise as reference if the user enabled "Relative to Sunrise"
+        let referenceTime: Date
+        if fajrConfig.usesSunriseOffset, let sunrise = tomorrowTimesForFajr.sunrise {
+            referenceTime = sunrise
+        } else {
+            referenceTime = fajrTime
+        }
+
+        let scheduledTime = referenceTime.addingTimeInterval(TimeInterval(fajrConfig.offsetMinutes * 60))
+
+        guard scheduledTime > Date() else { return }
+
+        let preferences = try getOrCreatePreferences()
+        // Explicit cancel — this path bypasses reconcileAlarms() which normally handles per-prayer cleanup
+        try await alarmService.cancelAlarm(for: .fajr)
+        try await alarmService.scheduleAlarm(
+            for: .fajr,
+            at: scheduledTime,
+            rawPrayerTime: fajrTime,
+            config: fajrConfig,
+            nextPrayer: .dhuhr,
+            nextPrayerTime: tomorrowTimesForFajr.dhuhr,
+            athanSound: preferences.selectedAthanSound
+        )
+    }
+
+    // MARK: - Pray Now Activities
+
+    /// Ends the standalone "Pray Now" LA for a prayer — called when marking done in app.
+    func endPrayNowActivity(for prayer: Prayer) {
+        alarmService.endPrayNowActivity(for: prayer)
+    }
+
+    /// Reads today's completed prayers from App Group UserDefaults.
+    func readCompletedPrayers() -> Set<String> {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return [] }
+        let completed = suite.dictionary(forKey: AppConstants.AppGroup.completedKey) as? [String: Double] ?? [:]
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        var result: Set<String> = []
+        for (key, timestamp) in completed {
+            let date = Date(timeIntervalSince1970: timestamp)
+            if date >= todayStart {
+                result.insert(key)
+            }
+        }
+        return result
     }
 
     // MARK: - Data Helpers
@@ -241,6 +299,63 @@ final class AppCoordinator {
     /// Cancels the active alarm for a prayer — called when marking done in the app.
     func cancelAlarm(for prayer: Prayer) async throws {
         try await alarmService.cancelAlarm(for: prayer)
+    }
+
+    /// Cancels the reminder alarm for a prayer — called when marking done.
+    func cancelReminderAlarm(for prayer: Prayer) async throws {
+        try await alarmService.cancelReminderAlarm(for: prayer)
+    }
+
+    /// Whether AlarmKit currently has an active alarm for this prayer.
+    func hasActiveAlarm(for prayer: Prayer) -> Bool {
+        guard let existingID = alarmService.fetchAlarmState(for: prayer)?.alarmID else { return false }
+        return alarmService.activeAlarmIDs.contains(existingID)
+    }
+
+    /// Whether a followup alarm is active for this prayer.
+    func hasActiveFollowup(for prayer: Prayer) -> Bool {
+        alarmService.hasActiveFollowup(for: prayer)
+    }
+
+    /// Cancels the followup alarm for a prayer — called when marking done.
+    func cancelFollowupAlarm(for prayer: Prayer) {
+        alarmService.cancelFollowupAlarm(for: prayer)
+    }
+
+    /// Silently schedules a recovery Live Activity for a missed prayer.
+    /// Called on foreground return when the alarm was dismissed but prayer isn't marked done.
+    func recoverMissedAlarm(for prayer: Prayer, originalFireDate: Date) async throws {
+        let configs = try getOrCreateAlarmConfigs()
+        guard let config = configs.first(where: { $0.prayerName == prayer.rawValue }) else { return }
+
+        let today = Date()
+        let todayTimes = prayerTimeService.getCachedTimes(for: today)
+
+        // Determine next prayer info for the LA metadata
+        let orderedPrayers = Prayer.allCases
+        let nextPrayer: Prayer?
+        let nextPrayerTime: Date?
+        if let idx = orderedPrayers.firstIndex(of: prayer), idx + 1 < orderedPrayers.count {
+            let next = orderedPrayers[idx + 1]
+            nextPrayer = next
+            nextPrayerTime = todayTimes?.time(for: next)
+        } else {
+            let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today) ?? today
+            let tomorrowTimes = prayerTimeService.getCachedTimes(for: tomorrow)
+            nextPrayer = .fajr
+            nextPrayerTime = tomorrowTimes?.fajr
+        }
+
+        let preferences = try getOrCreatePreferences()
+
+        try await alarmService.scheduleRecoveryAlarm(
+            for: prayer,
+            originalFireDate: originalFireDate,
+            config: config,
+            nextPrayer: nextPrayer,
+            nextPrayerTime: nextPrayerTime,
+            athanSound: preferences.selectedAthanSound
+        )
     }
 
     /// Writes today's prayer times + completions to App Group UserDefaults for the home screen widget.
@@ -268,6 +383,12 @@ final class AppCoordinator {
     func writeThemeToAppGroup(_ theme: ColorTheme) {
         guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
         suite.set(theme.rawValue, forKey: AppConstants.AppGroup.themeKey)
+    }
+
+    /// Writes reminder delay to App Group so intents can read it for push-back.
+    func writeReminderDelayToAppGroup(_ minutes: Int) {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+        suite.set(minutes, forKey: AppConstants.AppGroup.reminderDelayKey)
     }
 
     func getOrCreateAlarmConfigs() throws -> [PrayerAlarmConfig] {

@@ -20,6 +20,9 @@ final class PrayerTimesViewModel {
     var countdownFormatted: String?
     var progressToNextPrayer: Double = 0
     var completions: [PrayerCompletion] = []
+    /// Tracks which prayer we've already recovered for this foreground session,
+    /// to avoid duplicate scheduling on repeated scenePhase transitions.
+    private var recoveredPrayers: Set<String> = []
 
     init(coordinator: AppCoordinator, cloudContext: ModelContext) {
         self.coordinator = coordinator
@@ -127,35 +130,33 @@ final class PrayerTimesViewModel {
 
     /// Reads prayer completions written by MarkDoneIntent in the widget extension
     /// and marks corresponding PrayerCompletion records as done.
+    /// Only removes STALE entries (from previous days). Today's entries are kept
+    /// so reconcilePrayNowActivities() can see them.
     private func syncSharedCompletions(into completions: inout [PrayerCompletion]) {
         guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
         guard var completed = suite.dictionary(forKey: AppConstants.AppGroup.completedKey) as? [String: Double] else { return }
 
-        var processed: [String] = []
         let todayStart = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
         let todayEnd = todayStart + 86400
+        var staleKeys: [String] = []
 
         for (key, timestamp) in completed {
-            // Only process today's completions
             guard timestamp >= todayStart && timestamp < todayEnd else {
-                // Remove stale entries from previous days
-                processed.append(key)
+                staleKeys.append(key)
                 continue
             }
 
-            // Check if this is a prayer key
+            // Sync today's widget-side completions into SwiftData
             if let prayer = Prayer(rawValue: key),
                let record = completions.first(where: { $0.prayerName == prayer.rawValue }),
                !record.isCompleted {
                 record.isCompleted = true
                 record.completedAt = Date(timeIntervalSince1970: timestamp)
             }
-
-            processed.append(key)
         }
 
-        // Remove processed entries
-        for key in processed {
+        // Only remove stale entries from previous days — keep today's
+        for key in staleKeys {
             completed.removeValue(forKey: key)
         }
         suite.set(completed, forKey: AppConstants.AppGroup.completedKey)
@@ -169,15 +170,33 @@ final class PrayerTimesViewModel {
         completion.completedAt = completion.isCompleted ? Date() : nil
         try? cloudContext.save()
 
+        // Sync to App Group so reconcilePrayNowActivities() sees the completion
+        writeCompletionToAppGroup(prayer: prayer, isCompleted: completion.isCompleted)
+
         // Update badge count
         BadgeService.updateBadge(cloudContext: cloudContext, todayTimes: todayTimes)
 
-        // Dismiss the Live Activity when marking done in the app
+        // Dismiss the Live Activity and cancel all related alarms when marking done
         if completion.isCompleted {
+            coordinator.endPrayNowActivity(for: prayer)
             Task {
                 try? await coordinator.cancelAlarm(for: prayer)
+                try? await coordinator.cancelReminderAlarm(for: prayer)
+                coordinator.cancelFollowupAlarm(for: prayer)
             }
         }
+    }
+
+    /// Writes a prayer's completion state to App Group so the widget and reconcile can see it.
+    private func writeCompletionToAppGroup(prayer: Prayer, isCompleted: Bool) {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+        var completed = suite.dictionary(forKey: AppConstants.AppGroup.completedKey) as? [String: Double] ?? [:]
+        if isCompleted {
+            completed[prayer.rawValue] = Date().timeIntervalSince1970
+        } else {
+            completed.removeValue(forKey: prayer.rawValue)
+        }
+        suite.set(completed, forKey: AppConstants.AppGroup.completedKey)
     }
 
     /// Whether a prayer is completed today.
@@ -238,6 +257,11 @@ final class PrayerTimesViewModel {
             }
         }
         return nil
+    }
+
+    /// Returns the most recently passed prayer today, or nil if none have passed (before Fajr).
+    var mostRecentlyPassedPrayer: Prayer? {
+        Prayer.allCases.last(where: { hasPassed($0) })
     }
 
     /// Hijri date for display.
@@ -323,5 +347,54 @@ final class PrayerTimesViewModel {
         let totalInterval = time.timeIntervalSince(prevTime)
         let elapsed = Date().timeIntervalSince(prevTime)
         progressToNextPrayer = totalInterval > 0 ? min(max(elapsed / totalInterval, 0), 1) : 0
+    }
+
+    // MARK: - Silent Recovery
+
+    /// On foreground return, checks ALL recently-fired alarms for uncompleted prayers.
+    /// For each one, silently schedules a recovery Live Activity so "Pray Now" + Done
+    /// reappears on the lock screen. Supports multiple prayers simultaneously.
+    func recoverMissedAlarmIfNeeded() async {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+
+        // Read the per-prayer fired alarms dictionary
+        let firedAlarms = suite.dictionary(forKey: AppConstants.AppGroup.firedAlarmsKey) as? [String: Double] ?? [:]
+        // Also check legacy single-key format for backward compatibility
+        var allFired = firedAlarms
+        if let legacyName = suite.string(forKey: AppConstants.AppGroup.lastFiredAlarmKey) {
+            let legacyTime = suite.double(forKey: AppConstants.AppGroup.lastFiredAlarmTimeKey)
+            if legacyTime > 0, allFired[legacyName] == nil {
+                allFired[legacyName] = legacyTime
+            }
+        }
+
+        for (prayerName, fireTimestamp) in allFired {
+            guard let prayer = Prayer(rawValue: prayerName) else { continue }
+
+            let fireDate = Date(timeIntervalSince1970: fireTimestamp)
+            let elapsed = Date().timeIntervalSince(fireDate)
+
+            // Only recover if: fire date passed, within 4 hours, prayer not completed
+            guard elapsed > 0, elapsed < 4 * 3600, !isCompleted(prayer) else { continue }
+
+            // Don't re-schedule if already recovered this session
+            guard !recoveredPrayers.contains(prayerName) else { continue }
+
+            // Don't re-schedule if there's already an active alarm or followup
+            guard !coordinator.hasActiveAlarm(for: prayer),
+                  !coordinator.hasActiveFollowup(for: prayer) else { continue }
+
+            do {
+                try await coordinator.recoverMissedAlarm(for: prayer, originalFireDate: fireDate)
+                recoveredPrayers.insert(prayerName)
+                // Remove this entry from the dict so we don't re-recover on next foreground
+                var updated = suite.dictionary(forKey: AppConstants.AppGroup.firedAlarmsKey) as? [String: Double] ?? [:]
+                updated.removeValue(forKey: prayerName)
+                suite.set(updated, forKey: AppConstants.AppGroup.firedAlarmsKey)
+                print("[PrayerTimesVM] Recovery alarm scheduled for \(prayer.displayName)")
+            } catch {
+                print("[PrayerTimesVM] Recovery alarm failed for \(prayer.displayName): \(error)")
+            }
+        }
     }
 }

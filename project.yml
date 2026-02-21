@@ -9,7 +9,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "1.0.1"
+    MARKETING_VERSION: "1.1.0"
     CURRENT_PROJECT_VERSION: 1
 
 schemes:
@@ -36,6 +36,14 @@ targets:
       - path: AthanFramework
         excludes:
           - "LiveActivity/AthanWidgetBundle.swift"
+          - "AppIconBlue.icon"
+          - "AppIconRed.icon"
+      - path: AthanFramework/AppIconBlue.icon
+        type: folder
+        buildPhase: resources
+      - path: AthanFramework/AppIconRed.icon
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.athanframework.AthanFramework
@@ -43,7 +51,7 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_FILE: AthanFramework/Info.plist
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
-        INFOPLIST_KEY_CFBundleDisplayName: "Athan Beta v1"
+        INFOPLIST_KEY_CFBundleDisplayName: "Muraqib Alpha"
         INFOPLIST_KEY_UILaunchScreen_Generation: true
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_NSAlarmKitUsageDescription: "Schedule prayer time alarms that wake you for daily prayers"
@@ -51,7 +59,7 @@ targets:
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Determine accurate prayer times for your location"
         INFOPLIST_KEY_NSSupportsLiveActivities: true
         ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIconBlue AppIconRed"
-        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: true
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: false
         CODE_SIGN_ENTITLEMENTS: AthanFramework/AthanFramework.entitlements
     dependencies:
       - target: AthanWidgetExtension
@@ -71,6 +79,8 @@ targets:
       - path: AthanFramework/Utilities/Theme.swift
       - path: AthanFramework/Utilities/DateFormatter+Prayer.swift
       - path: AthanFramework/Intents/AlarmControlIntents.swift
+      - path: AthanFramework/Intents/PrayNowIntents.swift
+      - path: AthanFramework/LiveActivity/PrayNowAttributes.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.athanframework.AthanFramework.widget

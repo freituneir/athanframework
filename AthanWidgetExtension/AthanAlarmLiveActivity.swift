@@ -107,8 +107,16 @@ struct AthanAlarmLiveActivity: Widget {
             switch state.mode {
             case .countdown(let countdown):
                 if let fireDate = metadata?.fireDate, Date.now >= fireDate {
-                    Text(fireDate, style: .timer)
-                        .foregroundStyle(.red)
+                    // Post-alert: count up from raw prayer time (excluding user offset),
+                    // clamped to 0 until the actual prayer time arrives.
+                    let rawTime = metadata?.rawPrayerTime ?? fireDate
+                    if Date.now >= rawTime {
+                        Text(rawTime, style: .timer)
+                            .foregroundStyle(.red)
+                    } else {
+                        Text("0:00")
+                            .foregroundStyle(.red)
+                    }
                 } else {
                     Text(timerInterval: Date.now...countdown.fireDate, countsDown: true)
                 }
@@ -322,6 +330,9 @@ private struct LAProgressBar: View {
             case .countdown(let countdown):
                 // ProgressView(timerInterval:) animates in Live Activities —
                 // unlike Date.now which evaluates once and becomes stale.
+                // Note: After snooze, countdown.fireDate changes but preAlertSeconds doesn't.
+                // This is safe because isPostAlert=true during snooze (metadata.fireDate is
+                // in the past), so this branch is never reached post-snooze.
                 let preAlert = metadata?.preAlertSeconds ?? 300
                 let startDate = countdown.fireDate.addingTimeInterval(-preAlert)
                 ProgressView(

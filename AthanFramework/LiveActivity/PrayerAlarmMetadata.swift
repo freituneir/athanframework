@@ -16,6 +16,9 @@ struct PrayerAlarmMetadata: AlarmMetadata {
     var snoozeDurationSeconds: Int
     /// Actual preAlert countdown window in seconds — used by LAProgressBar for accurate fill.
     var preAlertSeconds: Double
+    /// The actual prayer time from the API, without user offset.
+    /// Used for count-up timer display — shows time since prayer actually started.
+    var rawPrayerTime: Date
 
     init() {
         self.prayerName = ""
@@ -24,11 +27,13 @@ struct PrayerAlarmMetadata: AlarmMetadata {
         self.nextPrayerTimeString = ""
         self.snoozeDurationSeconds = 300
         self.preAlertSeconds = 300
+        self.rawPrayerTime = .now
     }
 
-    init(prayer: Prayer, fireDate: Date, nextPrayer: Prayer? = nil, nextPrayerTimeString: String = "", snoozeDurationSeconds: Int = 300, preAlertSeconds: Double = 300) {
+    init(prayer: Prayer, fireDate: Date, rawPrayerTime: Date? = nil, nextPrayer: Prayer? = nil, nextPrayerTimeString: String = "", snoozeDurationSeconds: Int = 300, preAlertSeconds: Double = 300) {
         self.prayerName = prayer.rawValue
         self.fireDate = fireDate
+        self.rawPrayerTime = rawPrayerTime ?? fireDate
         self.nextPrayerName = nextPrayer?.rawValue ?? ""
         self.nextPrayerTimeString = nextPrayerTimeString
         self.snoozeDurationSeconds = snoozeDurationSeconds

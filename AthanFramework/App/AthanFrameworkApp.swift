@@ -21,9 +21,6 @@ struct AthanFrameworkApp: App {
     let customReminderViewModel: CustomReminderViewModel
 
     init() {
-        // NOTE: cloudKitDatabase changed from .automatic to .none to allow
-        // deployment on free/personal developer accounts (no iCloud entitlement).
-        // Revert to .automatic once paid Apple Developer account is approved.
         let cloudSchema = Schema([
             DailyPrayerTimes.self,
             PrayerAlarmConfig.self,
@@ -34,7 +31,7 @@ struct AthanFrameworkApp: App {
         let cloudConfig = ModelConfiguration(
             "CloudStore",
             schema: cloudSchema,
-            cloudKitDatabase: .none
+            cloudKitDatabase: .automatic
         )
 
         // Local-only models (device-specific alarm IDs, cached prayer times)

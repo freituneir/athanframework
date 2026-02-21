@@ -73,6 +73,25 @@ final class SettingsViewModel {
         }
     }
 
+    func updateReminderDelay(_ minutes: Int) {
+        preferences?.reminderDelayMinutes = minutes
+        try? cloudContext.save()
+
+        // Write to App Group so intents can read it for push-back
+        if let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) {
+            suite.set(minutes, forKey: AppConstants.AppGroup.reminderDelayKey)
+        }
+
+        // If turned off, cancel all existing reminder alarms
+        if minutes == 0, let alarmService {
+            Task {
+                for prayer in Prayer.allCases {
+                    try? await alarmService.cancelReminderAlarm(for: prayer)
+                }
+            }
+        }
+    }
+
     func updateTheme(_ theme: ColorTheme) {
         preferences?.selectedTheme = theme
         try? cloudContext.save()
@@ -86,7 +105,11 @@ final class SettingsViewModel {
         // Switch app icon to match the theme
         let currentIcon = UIApplication.shared.alternateIconName
         if currentIcon != theme.alternateIconName {
-            UIApplication.shared.setAlternateIconName(theme.alternateIconName)
+            UIApplication.shared.setAlternateIconName(theme.alternateIconName) { error in
+                if let error {
+                    print("[Theme] setAlternateIconName failed: \(error)")
+                }
+            }
         }
     }
 }

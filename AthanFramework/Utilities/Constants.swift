@@ -32,5 +32,15 @@ enum AppConstants {
         static let prayerTimesKey = "widgetPrayerTimes"
         static let nextPrayerKey = "widgetNextPrayer"
         static let themeKey = "selectedTheme"
+        static let lastFiredAlarmKey = "lastFiredAlarm"       // String: prayer rawValue (legacy)
+        static let lastFiredAlarmTimeKey = "lastFiredAlarmTime" // Double: timestamp (legacy)
+        static let firedAlarmsKey = "firedAlarms"              // [String: Double]: prayer -> timestamp
+        static let reminderDelayKey = "reminderDelay"          // Int: minutes
+        /// Per-prayer reminder alarm IDs: "reminderAlarmID-{prayer}" -> UUID string
+        static func reminderAlarmIDKey(for prayer: String) -> String { "reminderAlarmID-\(prayer)" }
+        /// Per-prayer original fire dates: "reminderFireDate-{prayer}" -> Double (timestamp)
+        static func reminderFireDateKey(for prayer: String) -> String { "reminderFireDate-\(prayer)" }
+        /// Per-prayer followup alarm IDs: "followupAlarmID-{prayer}" -> UUID string
+        static func followupAlarmIDKey(for prayer: String) -> String { "followupAlarmID-\(prayer)" }
     }
 }

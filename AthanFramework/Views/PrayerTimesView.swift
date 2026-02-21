@@ -25,14 +25,20 @@ struct PrayerTimesView: View {
                             .padding(.bottom, 48)
 
                         if let next = viewModel.nextPrayer {
+                            let passedPrayer = viewModel.mostRecentlyPassedPrayer
                             NextPrayerCard(
                                 prayer: next,
                                 timeString: viewModel.timeString(for: next),
                                 countdown: viewModel.countdownFormatted,
                                 progress: viewModel.progressToNextPrayer,
                                 allPassed: false,
-                                isCompleted: viewModel.isCompleted(next),
-                                onDone: { viewModel.toggleCompletion(for: next) }
+                                showDone: passedPrayer != nil,
+                                isCompleted: passedPrayer.map { viewModel.isCompleted($0) } ?? false,
+                                onDone: {
+                                    if let passed = passedPrayer {
+                                        viewModel.toggleCompletion(for: passed)
+                                    }
+                                }
                             )
                         } else {
                             NextPrayerCard(
@@ -41,6 +47,7 @@ struct PrayerTimesView: View {
                                 countdown: viewModel.countdownFormatted,
                                 progress: viewModel.progressToNextPrayer,
                                 allPassed: true,
+                                showDone: false,
                                 isCompleted: false,
                                 onDone: {}
                             )
@@ -72,8 +79,12 @@ struct PrayerTimesView: View {
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
+                    DebugLog.shared.importIntentLogs()
                     viewModel.loadTodayTimes()
-                    Task { await viewModel.refreshIfNeeded() }
+                    Task {
+                        await viewModel.recoverMissedAlarmIfNeeded()
+                        await viewModel.refreshIfNeeded()
+                    }
                 }
             }
             .refreshable {
@@ -117,9 +128,7 @@ struct PrayerTimesView: View {
                 .padding(.bottom, 16)
 
             ForEach(Prayer.allCases) { prayer in
-                if prayer != viewModel.nextPrayer {
-                    prayerRow(prayer)
-                }
+                prayerRow(prayer)
             }
         }
     }
@@ -231,6 +240,7 @@ private struct NextPrayerCard: View {
     let countdown: String?
     let progress: Double
     let allPassed: Bool
+    let showDone: Bool
     let isCompleted: Bool
     let onDone: () -> Void
 
@@ -260,6 +270,8 @@ private struct NextPrayerCard: View {
                     .font(.system(size: 72, weight: .light, design: .serif))
                     .foregroundStyle(AthanTheme.textPrimary)
                     .monospacedDigit()
+                    .minimumScaleFactor(0.75)
+                    .lineLimit(1)
                     .contentTransition(.numericText())
 
                 Text(allPassed ? "UNTIL FAJR" : "REMAINING")
@@ -284,7 +296,7 @@ private struct NextPrayerCard: View {
 
                 Spacer()
 
-                if !allPassed {
+                if showDone {
                     Button(action: onDone) {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark")

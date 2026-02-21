@@ -25,4 +25,18 @@ final class DebugLog {
     }
 
     func clear() { entries.removeAll() }
+
+    /// Imports intent logs from App Group (written by widget extension intents).
+    /// Call on foreground return to see what intents did while the app was backgrounded.
+    func importIntentLogs() {
+        guard let suite = UserDefaults(suiteName: AppConstants.AppGroup.suiteName) else { return }
+        let logs = suite.stringArray(forKey: "intentLogs") ?? []
+        for msg in logs {
+            entries.append(Entry(message: "INTENT \(msg)", isError: false))
+        }
+        if !logs.isEmpty {
+            suite.removeObject(forKey: "intentLogs")
+            print("[DEBUG] Imported \(logs.count) intent log(s)")
+        }
+    }
 }

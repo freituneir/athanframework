@@ -313,6 +313,387 @@ struct AlarmSchedulingLogicTests {
     }
 }
 
+// MARK: - PreAlert Computation Edge Cases
+//
+// Tests the formula: preAlertSeconds = min(preAlertWindow, max(secondsUntil, 30))
+// where preAlertWindow = 300 (5 minutes)
+// These verify boundary conditions that affect whether the AlarmKit schedule
+// time ends up in the past (alarm < 30s away) or is correctly capped.
+
+struct PreAlertComputationTests {
+
+    /// Mirrors AlarmSchedulingService.preAlertWindow
+    private let preAlertWindow: TimeInterval = 5 * 60
+
+    /// Mirrors the formula at AlarmSchedulingService.swift:272
+    private func computePreAlert(secondsUntil: TimeInterval) -> TimeInterval {
+        min(preAlertWindow, max(secondsUntil, 30))
+    }
+
+    @Test("secondsUntil = 10 → preAlert clamped to floor of 30s, schedule is in the past")
+    func alarmLessThan30sAway() {
+        let secondsUntil: TimeInterval = 10
+        let preAlert = computePreAlert(secondsUntil: secondsUntil)
+
+        #expect(preAlert == 30) // floor clamp
+        // Schedule = time - preAlert = (now+10) - 30 = now-20 (in the past!)
+        let scheduleOffset = secondsUntil - preAlert
+        #expect(scheduleOffset < 0, "Schedule is in the past when alarm is < 30s away")
+    }
+
+    @Test("secondsUntil = 30 → preAlert exactly at floor boundary")
+    func alarmExactly30sAway() {
+        let preAlert = computePreAlert(secondsUntil: 30)
+        #expect(preAlert == 30)
+    }
+
+    @Test("secondsUntil = 150 → preAlert passes through mid-range unchanged")
+    func alarmMidRange() {
+        let preAlert = computePreAlert(secondsUntil: 150)
+        #expect(preAlert == 150)
+    }
+
+    @Test("secondsUntil = 300 → preAlert exactly at cap boundary")
+    func alarmExactly5MinAway() {
+        let preAlert = computePreAlert(secondsUntil: 300)
+        #expect(preAlert == 300)
+    }
+
+    @Test("secondsUntil = 600 → preAlert capped at 300 (5 min window)")
+    func alarm10MinAway() {
+        let preAlert = computePreAlert(secondsUntil: 600)
+        #expect(preAlert == 300, "Should cap at preAlertWindow")
+    }
+
+    @Test("secondsUntil = 3600 → preAlert capped at 300 for any large value")
+    func alarm1HourAway() {
+        let preAlert = computePreAlert(secondsUntil: 3600)
+        #expect(preAlert == 300)
+    }
+
+    @Test("secondsUntil = -5 → negative clamped to floor of 30s")
+    func alarmInThePast() {
+        let preAlert = computePreAlert(secondsUntil: -5)
+        #expect(preAlert == 30, "Negative secondsUntil should clamp to floor")
+    }
+
+    @Test("secondsUntil = 0 → exactly at prayer time, clamped to 30s")
+    func alarmExactlyNow() {
+        let preAlert = computePreAlert(secondsUntil: 0)
+        #expect(preAlert == 30)
+    }
+
+    @Test("Schedule offset: preAlert < secondsUntil → schedule is in the future")
+    func scheduleInFuture() {
+        let secondsUntil: TimeInterval = 600 // 10 min
+        let preAlert = computePreAlert(secondsUntil: secondsUntil) // 300
+        let scheduleOffset = secondsUntil - preAlert
+        #expect(scheduleOffset > 0, "Schedule should be in the future")
+        #expect(scheduleOffset == 300)
+    }
+
+    @Test("Schedule offset: preAlert == secondsUntil → schedule fires immediately (now)")
+    func scheduleNow() {
+        let secondsUntil: TimeInterval = 150
+        let preAlert = computePreAlert(secondsUntil: secondsUntil) // 150
+        let scheduleOffset = secondsUntil - preAlert
+        #expect(scheduleOffset == 0, "Schedule fires exactly now")
+    }
+}
+
+// MARK: - Offset + PreAlert Independence Tests
+//
+// User offsets shift WHEN the alarm fires. PreAlert shifts WHEN the LA appears.
+// These are independent: offset shifts scheduledTime, preAlert shifts the AlarmKit schedule.
+
+struct OffsetPreAlertIndependenceTests {
+
+    private let preAlertWindow: TimeInterval = 300
+
+    @Test("Negative offset shifts fire time backward, preAlert is independent")
+    func negativeOffsetIndependence() {
+        let prayerTime = Date().addingTimeInterval(3600) // 1 hour from now
+        let offsetMinutes = -30
+
+        // Step 1: Apply user offset (reconcileAlarms logic)
+        let scheduledTime = prayerTime.addingTimeInterval(TimeInterval(offsetMinutes * 60))
+        #expect(scheduledTime == prayerTime.addingTimeInterval(-1800))
+
+        // Step 2: Compute preAlert (scheduleAlarm logic)
+        let secondsUntil = scheduledTime.timeIntervalSince(.now)
+        let preAlert = min(preAlertWindow, max(secondsUntil, 30))
+        #expect(preAlert == 300, "preAlert capped at 5 min regardless of offset")
+
+        // Step 3: AlarmKit schedule time
+        let alarmKitSchedule = scheduledTime.addingTimeInterval(-preAlert)
+        #expect(alarmKitSchedule < scheduledTime)
+        #expect(scheduledTime.timeIntervalSince(alarmKitSchedule) == 300)
+    }
+
+    @Test("Positive offset shifts fire time forward, preAlert is independent")
+    func positiveOffsetIndependence() {
+        let prayerTime = Date().addingTimeInterval(3600)
+        let offsetMinutes = 15
+
+        let scheduledTime = prayerTime.addingTimeInterval(TimeInterval(offsetMinutes * 60))
+        #expect(scheduledTime > prayerTime)
+
+        let secondsUntil = scheduledTime.timeIntervalSince(.now)
+        let preAlert = min(preAlertWindow, max(secondsUntil, 30))
+        #expect(preAlert == 300, "preAlert always capped for distant alarms")
+    }
+
+    @Test("Fajr sunrise offset with nil sunrise falls back to Fajr time")
+    func sunriseNilFallback() {
+        let entry = DailyPrayerTimes()
+        let fajrTime = Date().addingTimeInterval(3600)
+        entry.fajr = fajrTime
+        // sunrise is nil (extreme latitude / polar region)
+
+        let config = PrayerAlarmConfig(prayer: .fajr)
+        config.usesSunriseOffset = true
+        config.offsetMinutes = -30
+
+        // Simulate reconcileAlarms logic:
+        // if prayer == .fajr, config.usesSunriseOffset, let sunrise = prayerTimes.sunrise
+        // → sunrise is nil, falls through to baseTime
+        let referenceTime: Date
+        if config.usesSunriseOffset, let sunrise = entry.sunrise {
+            referenceTime = sunrise
+        } else {
+            referenceTime = entry.time(for: .fajr)!
+        }
+
+        let scheduledTime = referenceTime.addingTimeInterval(TimeInterval(config.offsetMinutes * 60))
+        #expect(referenceTime == fajrTime, "Should fall back to Fajr time when sunrise is nil")
+        #expect(scheduledTime == fajrTime.addingTimeInterval(-1800))
+    }
+
+    @Test("Fajr sunrise offset uses sunrise when available")
+    func sunriseOffsetUsed() {
+        let entry = DailyPrayerTimes()
+        let fajrTime = Date().addingTimeInterval(3600)
+        let sunriseTime = Date().addingTimeInterval(3600 + 5400) // 90 min after fajr
+        entry.fajr = fajrTime
+        entry.sunrise = sunriseTime
+
+        let config = PrayerAlarmConfig(prayer: .fajr)
+        config.usesSunriseOffset = true
+        config.offsetMinutes = -30
+
+        let referenceTime: Date
+        if config.usesSunriseOffset, let sunrise = entry.sunrise {
+            referenceTime = sunrise
+        } else {
+            referenceTime = entry.time(for: .fajr)!
+        }
+
+        let scheduledTime = referenceTime.addingTimeInterval(TimeInterval(config.offsetMinutes * 60))
+        #expect(referenceTime == sunriseTime, "Should use sunrise as reference")
+        #expect(scheduledTime == sunriseTime.addingTimeInterval(-1800))
+    }
+}
+
+// MARK: - Recovery Alarm Boundary Tests
+//
+// Tests the 4-hour recovery window: elapsed > 0, elapsed < 4 * 3600
+
+struct RecoveryAlarmBoundaryTests {
+
+    private let recoveryWindow: TimeInterval = 4 * 3600 // 4 hours
+
+    /// Simulates the recovery guard logic from PrayerTimesViewModel.recoverMissedAlarmIfNeeded()
+    private func shouldRecover(elapsed: TimeInterval, isCompleted: Bool, hasActiveAlarm: Bool, alreadyRecovered: Bool) -> Bool {
+        elapsed > 0 && elapsed < recoveryWindow && !isCompleted && !alreadyRecovered && !hasActiveAlarm
+    }
+
+    @Test("Fire date 3h59m ago → recovery schedules")
+    func justInsideWindow() {
+        let elapsed: TimeInterval = 3 * 3600 + 59 * 60 // 3h 59m
+        #expect(shouldRecover(elapsed: elapsed, isCompleted: false, hasActiveAlarm: false, alreadyRecovered: false))
+    }
+
+    @Test("Fire date exactly 4h ago → recovery does NOT schedule (boundary)")
+    func exactlyAtBoundary() {
+        let elapsed: TimeInterval = 4 * 3600
+        #expect(!shouldRecover(elapsed: elapsed, isCompleted: false, hasActiveAlarm: false, alreadyRecovered: false),
+               "elapsed < 4h check fails at exact boundary")
+    }
+
+    @Test("Fire date 4h01m ago → recovery does NOT schedule")
+    func justOutsideWindow() {
+        let elapsed: TimeInterval = 4 * 3600 + 60
+        #expect(!shouldRecover(elapsed: elapsed, isCompleted: false, hasActiveAlarm: false, alreadyRecovered: false))
+    }
+
+    @Test("Fire date 1 second ago → recovery schedules")
+    func justFired() {
+        let elapsed: TimeInterval = 1
+        #expect(shouldRecover(elapsed: elapsed, isCompleted: false, hasActiveAlarm: false, alreadyRecovered: false))
+    }
+
+    @Test("Fire date in the future (elapsed < 0) → no recovery")
+    func futureFireDate() {
+        let elapsed: TimeInterval = -60
+        #expect(!shouldRecover(elapsed: elapsed, isCompleted: false, hasActiveAlarm: false, alreadyRecovered: false))
+    }
+
+    @Test("Completed prayer → no recovery even within window")
+    func completedPrayerSkipsRecovery() {
+        let elapsed: TimeInterval = 1800
+        #expect(!shouldRecover(elapsed: elapsed, isCompleted: true, hasActiveAlarm: false, alreadyRecovered: false))
+    }
+
+    @Test("Active alarm exists → no recovery (prevents duplicate)")
+    func activeAlarmSkipsRecovery() {
+        let elapsed: TimeInterval = 1800
+        #expect(!shouldRecover(elapsed: elapsed, isCompleted: false, hasActiveAlarm: true, alreadyRecovered: false))
+    }
+
+    @Test("Already recovered this session → no duplicate recovery")
+    func alreadyRecoveredSkips() {
+        let elapsed: TimeInterval = 1800
+        #expect(!shouldRecover(elapsed: elapsed, isCompleted: false, hasActiveAlarm: false, alreadyRecovered: true))
+    }
+}
+
+// MARK: - PrayerAlarmMetadata Tests
+
+struct PrayerAlarmMetadataTests {
+
+    @Test("Default init creates valid metadata with empty values")
+    func defaultInit() {
+        let metadata = PrayerAlarmMetadata()
+        #expect(metadata.prayerName == "")
+        #expect(metadata.preAlertSeconds == 300)
+        #expect(metadata.snoozeDurationSeconds == 300)
+    }
+
+    @Test("Convenience init populates all fields")
+    func convenienceInit() {
+        let fireDate = Date().addingTimeInterval(300)
+        let metadata = PrayerAlarmMetadata(
+            prayer: .fajr,
+            fireDate: fireDate,
+            nextPrayer: .dhuhr,
+            nextPrayerTimeString: "12:30 PM",
+            snoozeDurationSeconds: 120,
+            preAlertSeconds: 250
+        )
+
+        #expect(metadata.prayerName == "fajr")
+        #expect(metadata.fireDate == fireDate)
+        #expect(metadata.nextPrayerName == "dhuhr")
+        #expect(metadata.nextPrayerTimeString == "12:30 PM")
+        #expect(metadata.snoozeDurationSeconds == 120)
+        #expect(metadata.preAlertSeconds == 250)
+    }
+
+    @Test("Post-alert detection: Date.now >= fireDate when fire date is in the past")
+    func postAlertDetectionPast() {
+        let fireDate = Date().addingTimeInterval(-60) // 1 minute ago
+        let metadata = PrayerAlarmMetadata(
+            prayer: .fajr,
+            fireDate: fireDate,
+            snoozeDurationSeconds: 120,
+            preAlertSeconds: 300
+        )
+        #expect(Date.now >= metadata.fireDate, "Past fire date → post-alert")
+    }
+
+    @Test("Post-alert detection: Date.now < fireDate when fire date is in the future")
+    func postAlertDetectionFuture() {
+        let fireDate = Date().addingTimeInterval(300) // 5 min from now
+        let metadata = PrayerAlarmMetadata(
+            prayer: .fajr,
+            fireDate: fireDate,
+            snoozeDurationSeconds: 120,
+            preAlertSeconds: 300
+        )
+        #expect(Date.now < metadata.fireDate, "Future fire date → pre-alert")
+    }
+
+    @Test("Recovery alarm metadata: fireDate in past + preAlert 4h → silent LA pattern")
+    func recoveryAlarmMetadataPattern() {
+        let originalFireDate = Date().addingTimeInterval(-1800) // 30 min ago
+        let metadata = PrayerAlarmMetadata(
+            prayer: .fajr,
+            fireDate: originalFireDate,
+            snoozeDurationSeconds: 120,
+            preAlertSeconds: 4 * 3600 // 4 hours — the silent alarm trick
+        )
+
+        // Post-alert check: fireDate is in the past → shows "Pray Now"
+        #expect(Date.now >= metadata.fireDate, "Recovery alarm is always post-alert")
+        // preAlertSeconds is much larger than any real countdown — keeps LA in countdown mode
+        #expect(metadata.preAlertSeconds == 14400)
+    }
+}
+
+// MARK: - Reconcile Loop Proximity Tests
+//
+// Tests behavior when two prayers are very close together.
+
+struct PrayerProximityTests {
+
+    @Test("Two prayers 3 minutes apart both get scheduled")
+    func prayersCloseTogther() {
+        let entry = DailyPrayerTimes()
+        let base = Date().addingTimeInterval(3600)
+
+        entry.fajr = base
+        entry.dhuhr = base.addingTimeInterval(3600 * 5)
+        entry.asr = base.addingTimeInterval(3600 * 8)
+        // Maghrib and Isha only 3 minutes apart (extreme latitude)
+        entry.maghrib = base.addingTimeInterval(3600 * 11)
+        entry.isha = base.addingTimeInterval(3600 * 11 + 180) // 3 min after Maghrib
+
+        let configs = Prayer.allCases.map { PrayerAlarmConfig(prayer: $0) }
+
+        var toSchedule: [(Prayer, Date)] = []
+
+        for prayer in Prayer.allCases {
+            guard let config = configs.first(where: { $0.prayerName == prayer.rawValue }),
+                  config.isEnabled,
+                  let baseTime = entry.time(for: prayer) else { continue }
+
+            let scheduledTime = baseTime.addingTimeInterval(TimeInterval(config.offsetMinutes * 60))
+            guard scheduledTime > Date.now else { continue }
+
+            toSchedule.append((prayer, scheduledTime))
+        }
+
+        #expect(toSchedule.count == 5, "All 5 prayers scheduled even when close together")
+
+        // Verify Maghrib and Isha are only 3 min apart
+        let maghribTime = toSchedule.first(where: { $0.0 == .maghrib })!.1
+        let ishaTime = toSchedule.first(where: { $0.0 == .isha })!.1
+        #expect(ishaTime.timeIntervalSince(maghribTime) == 180)
+    }
+
+    @Test("Large negative offset can make a prayer's scheduled time earlier than previous prayer")
+    func offsetCausesOverlap() {
+        let entry = DailyPrayerTimes()
+        let base = Date().addingTimeInterval(3600)
+
+        entry.fajr = base
+        entry.dhuhr = base.addingTimeInterval(3600 * 5)
+        entry.asr = base.addingTimeInterval(3600 * 8)
+        entry.maghrib = base.addingTimeInterval(3600 * 11)
+        entry.isha = base.addingTimeInterval(3600 * 12)
+
+        let configs = Prayer.allCases.map { PrayerAlarmConfig(prayer: $0) }
+        // Set Isha offset to -90 minutes → fires 30 min before Maghrib
+        configs.first(where: { $0.prayerName == "isha" })?.offsetMinutes = -90
+
+        let maghribScheduled = entry.time(for: .maghrib)!
+        let ishaScheduled = entry.time(for: .isha)!.addingTimeInterval(-90 * 60)
+
+        #expect(ishaScheduled < maghribScheduled,
+               "Isha with -90 offset fires before Maghrib — edge case")
+    }
+}
+
 // MARK: - CustomReminder Model Tests
 
 struct CustomReminderTests {

@@ -157,6 +157,22 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Label {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Hardware buttons dismiss the alarm sound.")
+                            Text("If the prayer isn\u{2019}t marked done, the reminder will appear on your lock screen.")
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(AthanTheme.textSecondary)
+                    } icon: {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(AthanTheme.accent.opacity(0.6))
+                    }
+                } header: {
+                    Text("Alarm Tips")
+                }
+
+                Section {
                     NavigationLink {
                         ScheduledAlarmsView()
                     } label: {
@@ -168,12 +184,12 @@ struct SettingsView: View {
 
                 Section {
                     Button {
-                        scheduleTestAlarm(label: "Test F") {
+                        scheduleTestAlarm(label: "Test") {
                             let sound = viewModel.preferences?.selectedAthanSound ?? .defaultTone
                             return try await alarmService.scheduleTestAlarmCorrected(index: testAlarmIndex, athanSound: sound)
                         }
                     } label: {
-                        Label("Test F: Corrected (3 min)", systemImage: "f.circle")
+                        Label("Test Alarm + Pray Now (90s)", systemImage: "bell.badge")
                     }
 
                     Button(role: .destructive) {
@@ -185,7 +201,7 @@ struct SettingsView: View {
                     }
 
                     if let fireInfo = testFireTime {
-                        Text("\(fireInfo.label) fires at \(fireInfo.date.formatted(date: .omitted, time: .standard))")
+                        Text("\(fireInfo.label): \(fireInfo.date.formatted(date: .omitted, time: .standard))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -212,7 +228,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Debug")
                 } footer: {
-                    Text("Test F: countdown at +1 min, alarm at +3 min. Snooze = 60s (same LA, no new widget).")
+                    Text("Alarm + Pray Now: countdown at +30s, alarm fires at +90s, snooze=30s. 'Pray Now' LA appears immediately and persists through dismiss/snooze/hardware-dismiss. Tap Done on the Pray Now LA to dismiss it.")
                 }
 
                 Section {

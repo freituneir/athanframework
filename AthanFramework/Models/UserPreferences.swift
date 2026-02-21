@@ -28,6 +28,9 @@ final class UserPreferences {
     // Theme
     var selectedThemeRaw: String = ColorTheme.green.rawValue
 
+    // Reminder LA: how many minutes after prayer time before the "Pray Now" LA appears
+    var reminderDelayMinutes: Int = 5
+
     // Tracking
     var onboardingCompleted: Bool = false
     var lastRefreshDate: Date?

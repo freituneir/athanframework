@@ -1,0 +1,15 @@
+{
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "Front.png",
+          "name" : "Front"
+        }
+      ]
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

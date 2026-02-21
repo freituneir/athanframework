@@ -6,34 +6,5 @@
 	<string>Schedule prayer time alarms that wake you for daily prayers</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
-	<key>CFBundleIcons</key>
-	<dict>
-		<key>CFBundlePrimaryIcon</key>
-		<dict>
-			<key>CFBundleIconName</key>
-			<string>AppIcon</string>
-		</dict>
-		<key>CFBundleAlternateIcons</key>
-		<dict>
-			<key>AppIconBlue</key>
-			<dict>
-				<key>CFBundleIconName</key>
-				<string>AppIconBlue</string>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AppIconBlue60x60</string>
-				</array>
-			</dict>
-			<key>AppIconRed</key>
-			<dict>
-				<key>CFBundleIconName</key>
-				<string>AppIconRed</string>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AppIconRed60x60</string>
-				</array>
-			</dict>
-		</dict>
-	</dict>
 </dict>
 </plist>
